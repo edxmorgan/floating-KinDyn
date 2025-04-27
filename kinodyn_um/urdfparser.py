@@ -5,10 +5,10 @@ import casadi as cs
 import numpy as np
 from platform import machine, system
 from urdf_parser_py.urdf import URDF, Pose
-import urdf2casadi.geometry.transformation_matrix as T
-import urdf2casadi.geometry.plucker as plucker
-import urdf2casadi.geometry.quaternion as quaternion
-import urdf2casadi.geometry.dual_quaternion as dual_quaternion
+import kinodyn_um.utils.transformation_matrix as T
+import kinodyn_um.utils.plucker as plucker
+import kinodyn_um.utils.quaternion as quaternion
+import kinodyn_um.utils.dual_quaternion as dual_quaternion
 
 
 class URDFparser(object):

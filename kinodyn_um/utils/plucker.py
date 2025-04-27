@@ -1,20 +1,20 @@
 import casadi as cs
-import urdf2casadi.geometry.transformation_matrix as tm
+import kinodyn_um.utils.transformation_matrix as tm
 import numpy as np
 
 
-def numpy_skew_symmetric(v):
-    """Returns a skew symmetric matrix from vector."""
-    return np.array([[0, -v[2], v[1]],
-                     [v[2], 0, -v[0]],
-                     [-v[1], v[0], 0]])
+# def numpy_skew_symmetric(v):
+#     """Returns a skew symmetric matrix from vector."""
+#     return np.array([[0, -v[2], v[1]],
+#                      [v[2], 0, -v[0]],
+#                      [-v[1], v[0], 0]])
 
 
-def inertia_matrix(I):
-    """Returns the 3x3 rotational inertia matrix given the inertia vector."""
-    return np.array([I[0], I[1], I[2]],
-                    [I[1], I[3], I[4]],
-                    [I[2], I[4], I[5]])
+# def inertia_matrix(I):
+#     """Returns the 3x3 rotational inertia matrix given the inertia vector."""
+#     return np.array([I[0], I[1], I[2]],
+#                     [I[1], I[3], I[4]],
+#                     [I[2], I[4], I[5]])
 
 
 def motion_cross_product(v):
@@ -51,19 +51,19 @@ def force_cross_product(v):
     return -motion_cross_product(v).T
 
 
-def spatial_inertia_matrix_Ic(ixx, ixy, ixz, iyy, iyz, izz, mass):
-    """Returns the 6x6 spatial inertia matrix expressed at the center of
-    mass."""
-    Ic = np.zeros([6, 6])
-    Ic[:3, :3] = np.array([[ixx, ixy, ixz],
-                           [ixy, iyy, iyz],
-                           [ixz, iyz, izz]])
+# def spatial_inertia_matrix_Ic(ixx, ixy, ixz, iyy, iyz, izz, mass):
+#     """Returns the 6x6 spatial inertia matrix expressed at the center of
+#     mass."""
+#     Ic = np.zeros([6, 6])
+#     Ic[:3, :3] = np.array([[ixx, ixy, ixz],
+#                            [ixy, iyy, iyz],
+#                            [ixz, iyz, izz]])
 
-    Ic[3, 3] = mass
-    Ic[4, 4] = mass
-    Ic[5, 5] = mass
+#     Ic[3, 3] = mass
+#     Ic[4, 4] = mass
+#     Ic[5, 5] = mass
 
-    return Ic
+#     return Ic
 
 
 def spatial_inertia_matrix_IO(ixx, ixy, ixz, iyy, iyz, izz, mass, c):
@@ -86,18 +86,22 @@ def spatial_inertia_matrix_IO(ixx, ixy, ixz, iyy, iyz, izz, mass, c):
 
     return IO_sym
 
-def numpy_rotation_rpy(roll, pitch, yaw):
-    """Returns a rotation matrix from roll pitch yaw. ZYX convention."""
-    cr = np.cos(roll)
-    sr = np.sin(roll)
-    cp = np.cos(pitch)
-    sp = np.sin(pitch)
-    cy = np.cos(yaw)
-    sy = np.sin(yaw)
-    return np.array([[cy*cp,  cy*sp*sr - sy*cr,  cy*sp*cr + sy*sr],
-                     [sy*cp,  sy*sp*sr + cy*cr,  sy*sp*cr - cy*sr],
-                     [  -sp,             cp*sr,             cp*cr]])
 
+def rotation_rpy(roll, pitch, yaw):
+    R = cs.SX(3, 3)
+
+    R[0,0] = cs.cos(yaw)*cs.cos(pitch)
+    R[0,1] = -cs.sin(yaw)*cs.cos(roll) + cs.cos(yaw)*cs.sin(pitch)*cs.sin(roll)
+    R[0,2] = cs.sin(yaw)*cs.sin(roll) + cs.cos(yaw)*cs.cos(roll)*cs.sin(pitch)
+
+    R[1,0] = cs.sin(yaw)*cs.cos(pitch)
+    R[1,1] = cs.cos(yaw)*cs.cos(roll) + cs.sin(roll)*cs.sin(pitch)*cs.sin(yaw)
+    R[1,2] = -cs.cos(yaw)*cs.sin(roll) + cs.sin(pitch)*cs.sin(yaw)*cs.cos(roll)
+
+    R[2,0] = -cs.sin(pitch)
+    R[2,1] = cs.cos(pitch)*cs.sin(roll)
+    R[2,2] = cs.cos(pitch)*cs.cos(roll)
+    return R
 
 # def spatial_force_transform(R, r):
 #     """Returns the spatial force transform from a 3x3 rotation matrix
@@ -118,16 +122,6 @@ def spatial_transform(R, r):
     X[3:, :3] = -cs.mtimes(R, cs.skew(r))
     return X
 
-# def spatial_transform_BA(R, r):
-#     """Returns the inverse spatial motion transform from a 3x3 rotation
-#     matrix and a 3x1 displacement vector."""
-#     X = cs.SX.zeros(6, 6)
-#     X[:3, :3] = R.T
-#     X[3:, 3:] = R.T
-#     X[3:, :3] = cs.mtimes(cs.skew(r), R.T)
-#     return X
-
-
 def XJT_revolute(xyz, rpy, axis, qi):
     """Returns the spatial transform from child link to parent link with
     a revolute connecting joint."""
@@ -137,15 +131,6 @@ def XJT_revolute(xyz, rpy, axis, qi):
     return spatial_transform(rotation_matrix, displacement)
 
 
-# def XJT_revolute_BA(xyz, rpy, axis, qi):
-#     """Returns the spatial transform from parent link to child link with
-#     a revolute connecting joint."""
-#     T = tm.revolute(xyz, rpy, axis, qi)
-#     rotation_matrix = T[:3, :3]
-#     displacement = T[:3, 3]
-#     return spatial_transform_BA(rotation_matrix, displacement)
-
-# @validate
 def XJT_prismatic(xyz, rpy, axis, qi):
     """Returns the spatial transform from child link to parent link with
     a prismatic connecting joint."""
@@ -155,19 +140,9 @@ def XJT_prismatic(xyz, rpy, axis, qi):
     return spatial_transform(rotation_matrix, displacement)
 
 
-
-# def XJT_prismatic_BA(xyz, rpy, axis, qi):
-#     """Returns the spatial transform from parent link to child link with
-#     a prismatic connecting joint."""
-#     T = tm.prismatic(xyz, rpy, axis, qi)
-#     rotation_matrix = T[:3, :3]
-#     displacement = T[:3, 3]
-#     return spatial_transform_BA(rotation_matrix, displacement)
-
-# @validate
 def XT(xyz, rpy):
     """Returns a general spatial transformation matrix matrix"""
-    rotation_matrix = numpy_rotation_rpy(rpy[0], rpy[1], rpy[2])
+    rotation_matrix = rotation_rpy(rpy[0], rpy[1], rpy[2])
     return spatial_transform(rotation_matrix, xyz)
 
 
