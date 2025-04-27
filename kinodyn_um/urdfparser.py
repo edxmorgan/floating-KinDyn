@@ -33,14 +33,6 @@ class URDFparser(object):
         """Uses an URDF file to get robot description."""
         self.robot_desc = URDF.from_xml_file(filename)
 
-    def from_server(self, key="robot_description"):
-        """Uses a parameter server to get robot description."""
-        self.robot_desc = URDF.from_parameter_server(key=key)
-
-    def from_string(self, urdfstring):
-        """Uses a URDF string to get robot description."""
-        self.robot_desc = URDF.from_xml_string(urdfstring)
-
     def get_joint_info(self, root, tip):
         """Using an URDF to extract joint information, i.e list of
         joints, actuated names and upper and lower limits."""
@@ -76,57 +68,6 @@ class URDFparser(object):
                         joint.origin.rpy = [0., 0., 0.]
 
         return joint_list, actuated_names, upper, lower
-
-    def get_dynamics_limits(self, root, tip):
-        """Using an URDF to extract joint max effort and velocity"""
-
-        chain = self.robot_desc.get_chain(root, tip)
-        if self.robot_desc is None:
-            raise ValueError('Robot description not loaded from urdf')
-
-        max_effort = []
-        max_velocity = []
-
-        for item in chain:
-            if item in self.robot_desc.joint_map:
-                joint = self.robot_desc.joint_map[item]
-                if joint.type in self.actuated_types:
-                    if joint.limit is None:
-                        max_effort += [cs.inf]
-                        max_velocity += [cs.inf]
-                    else:
-                        max_effort += [joint.limit.effort]
-                        max_velocity += [joint.limit.velocity]
-        max_effort = [cs.inf if x is None else x for x in max_effort]
-        max_velocity = [cs.inf if x is None else x for x in max_velocity]
-
-        return max_effort, max_velocity
-
-    def get_friction_matrices(self, root, tip):
-        """Using an URDF to extract joint frictions and dampings"""
-
-        chain = self.robot_desc.get_chain(root, tip)
-        if self.robot_desc is None:
-            raise ValueError('Robot description not loaded from urdf')
-
-        friction = []
-        damping = []
-
-        for item in chain:
-            if item in self.robot_desc.joint_map:
-                joint = self.robot_desc.joint_map[item]
-                if joint.type in self.actuated_types:
-                    if joint.dynamis is None:
-                        friction += [0]
-                        damping += [0]
-                    else:
-                        friction += [joint.dynamics.friction]
-                        damping += [joint.dynamics.damping]
-        friction = [0 if x is None else x for x in friction]
-        damping = [0 if x is None else x for x in damping]
-        Fv = np.diag(friction)
-        Fd = np.diag(damping)
-        return Fv, Fd
 
 
     def get_n_joints(self, root, tip):
@@ -211,8 +152,6 @@ class URDFparser(object):
 
         # min_pos, max_pos define an axis-aligned bounding box
         return min_pos, max_pos, positions
-
-
 
     def forward_kinematics(self, root, tip, floating_base = False):
         """Returns the inverse dynamics as a casadi function."""
