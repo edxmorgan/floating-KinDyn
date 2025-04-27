@@ -343,8 +343,8 @@ class URDFparser(object):
                     plucker.force_cross_product(v[i]),
                     cs.mtimes(Ic[i], v[i])))
 
-        if f_ext is not None:
-            f = self._apply_external_forces(f_ext, f, i_X_p)
+        # if f_ext is not None:
+        #     f = self._apply_external_forces(f_ext, f, i_X_p)
 
         for i in range(n_joints-1, -1, -1):
             tau[i] = cs.mtimes(Si[i].T, f[i])
@@ -516,7 +516,7 @@ class URDFparser(object):
         C = cs.Function("C", [q, q_dot], [tau], self.func_opts)
         return C
 
-    def get_forward_dynamics_crba(self, root, tip, gravity=None, f_ext=None):
+    def get_forward_dynamics_crba(self, root, tip, f_ext=None):
         """Returns the forward dynamics as a casadi function by
         solving the Lagrangian eq. of motion.  OBS! Not appropriate
         for robots with a high number of dof -> use
@@ -529,190 +529,29 @@ class URDFparser(object):
         q_dot = cs.SX.sym("q_dot", n_joints)
         tau = cs.SX.sym("tau", n_joints)
         q_ddot = cs.SX.zeros(n_joints)
+
+        gravity = cs.SX.sym("g")
+        g_vec = cs.vertcat(0,0,gravity)
+
+        viscous = cs.SX.sym('visc', n_joints)
+        coulomb = cs.SX.sym('coul', n_joints)
+
+        B_vec = cs.vertcat(viscous)
+        F_vec = cs.vertcat(coulomb)
+
+        k = 50.0                  # sharpness of tanh: ↑k → closer to true sign()
+        sgn_qdot = cs.tanh(k*q_dot)
+        tau_fric = cs.diag(B_vec) @ q_dot + cs.diag(F_vec) @ sgn_qdot
+
         i_X_p, Si, Ic, tip_ofs  = self._model_calculation(root, tip, q)
 
         M = self._get_M(Ic, i_X_p, Si, n_joints, q)
         M_inv = cs.solve(M, cs.SX.eye(M.size1()))
 
-        C = self._get_C(i_X_p, Si, Ic, q, q_dot, n_joints, gravity, f_ext)
+        C = self._get_C(i_X_p, Si, Ic, q, q_dot, n_joints, g_vec, f_ext)
 
-        q_ddot = cs.mtimes(M_inv, (tau - C))
-        q_ddot = cs.Function("q_ddot", [q, q_dot, tau],
+        q_ddot = cs.mtimes(M_inv, (tau - tau_fric - C))
+        q_ddot = cs.Function("q_ddot", [q, q_dot, tau, gravity, viscous, coulomb],
                              [q_ddot], self.func_opts)
 
         return q_ddot
-
-    def get_forward_dynamics_aba(self, root, tip, gravity=None, f_ext=None):
-        """Returns the forward dynamics as a casadi function using the
-        articulated body algorithm."""
-
-        if self.robot_desc is None:
-            raise ValueError('Robot description not loaded from urdf')
-
-        n_joints = self.get_n_joints(root, tip)
-        q = cs.SX.sym("q", n_joints)
-        q_dot = cs.SX.sym("q_dot", n_joints)
-        tau = cs.SX.sym("tau", n_joints)
-        q_ddot = cs.SX.zeros(n_joints)
-        i_X_p, Si, Ic, tip_ofs  = self._model_calculation(root, tip, q)
-
-        v = []
-        c = []
-        pA = []
-        IA = []
-
-        u = [None]*n_joints
-        U = [None]*n_joints
-        d = [None]*n_joints
-
-        for i in range(0, n_joints):
-            vJ = cs.mtimes(Si[i], q_dot[i])
-            if i == 0:
-                v.append(vJ)
-                c.append([0, 0, 0, 0, 0, 0])
-            else:
-                v.append(cs.mtimes(i_X_p[i], v[i-1]) + vJ)
-                c.append(cs.mtimes(plucker.motion_cross_product(v[i]), vJ))
-            IA.append(Ic[i])
-            pA.append(cs.mtimes(plucker.force_cross_product(v[i]),
-                                cs.mtimes(Ic[i], v[i])))
-
-        if f_ext is not None:
-            pA = self._apply_external_forces(f_ext, pA)
-
-        for i in range(n_joints-1, -1, -1):
-            U[i] = cs.mtimes(IA[i], Si[i])
-            d[i] = cs.mtimes(Si[i].T, U[i])
-            u[i] = tau[i] - cs.mtimes(Si[i].T, pA[i])
-            if i != 0:
-                Ia = IA[i] - ((cs.mtimes(U[i], U[i].T)/d[i]))
-                pa = pA[i] + cs.mtimes(Ia, c[i]) + (cs.mtimes(U[i], u[i])/d[i])
-                IA[i-1] += cs.mtimes(i_X_p[i].T, cs.mtimes(Ia, i_X_p[i]))
-                pA[i-1] += cs.mtimes(i_X_p[i].T, pa)
-
-        a = []
-        for i in range(0, n_joints):
-            if i == 0:
-                if gravity is not None:
-                    ag = np.array([0.,
-                                   0.,
-                                   0.,
-                                   gravity[0],
-                                   gravity[1],
-                                   gravity[2]])
-                    a_temp = (cs.mtimes(i_X_p[i], -ag) + c[i])
-                else:
-                    a_temp = c[i]
-            else:
-                a_temp = (cs.mtimes(i_X_p[i], a[i-1]) + c[i])
-            q_ddot[i] = (u[i] - cs.mtimes(U[i].T, a_temp))/d[i]
-            a.append(a_temp + cs.mtimes(Si[i], q_ddot[i]))
-
-        q_ddot = cs.Function("q_ddot", [q, q_dot, tau],
-                             [q_ddot], self.func_opts)
-        return q_ddot
-
-    def get_forward_kinematics(self, root, tip):
-        """Returns the forward kinematics as a casadi function."""
-        chain = self.robot_desc.get_chain(root, tip)
-        if self.robot_desc is None:
-            raise ValueError('Robot description not loaded from urdf')
-        joint_list, actuated_names, upper, lower = self.get_joint_info(
-            root,
-            tip)
-        nvar = len(actuated_names)
-        T_fk = cs.SX.eye(4)
-        q = cs.SX.sym("q", nvar)
-        quaternion_fk = cs.SX.zeros(4)
-        quaternion_fk[3] = 1.0
-        dual_quaternion_fk = cs.SX.zeros(8)
-        dual_quaternion_fk[3] = 1.0
-        i = 0
-        for joint in joint_list:
-            if joint.type == "fixed":
-                if joint.origin is not None:
-                    xyz = joint.origin.xyz
-                    rpy = joint.origin.rpy
-                else:
-                    # origin tag not given -> assume zero
-                    xyz = [0.0]*3
-                    rpy = [0.0]*3
-                joint_frame = T.numpy_rpy(xyz, *rpy)
-                joint_quaternion = quaternion.numpy_rpy(*rpy)
-                joint_dual_quat = dual_quaternion.numpy_prismatic(
-                    xyz,
-                    rpy,
-                    [1., 0., 0.],
-                    0.)
-                T_fk = cs.mtimes(T_fk, joint_frame)
-                quaternion_fk = quaternion.product(
-                    quaternion_fk,
-                    joint_quaternion)
-                dual_quaternion_fk = dual_quaternion.product(
-                    dual_quaternion_fk,
-                    joint_dual_quat)
-
-            elif joint.type == "prismatic":
-                if joint.axis is None:
-                    axis = cs.np.array([1., 0., 0.])
-                else:
-                    axis = cs.np.array(joint.axis)
-                # axis = (1./cs.np.linalg.norm(axis))*axis
-                joint_frame = T.prismatic(joint.origin.xyz,
-                                          joint.origin.rpy,
-                                          joint.axis, q[i])
-                joint_quaternion = quaternion.numpy_rpy(*joint.origin.rpy)
-                joint_dual_quat = dual_quaternion.prismatic(
-                    joint.origin.xyz,
-                    joint.origin.rpy,
-                    axis, q[i])
-                T_fk = cs.mtimes(T_fk, joint_frame)
-                quaternion_fk = quaternion.product(quaternion_fk,
-                                                   joint_quaternion)
-                dual_quaternion_fk = dual_quaternion.product(
-                    dual_quaternion_fk,
-                    joint_dual_quat)
-                i += 1
-
-            elif joint.type in ["revolute", "continuous"]:
-                if joint.axis is None:
-                    axis = cs.np.array([1., 0., 0.])
-                else:
-                    axis = cs.np.array(joint.axis)
-                axis = (1./cs.np.linalg.norm(axis))*axis
-                joint_frame = T.revolute(
-                    joint.origin.xyz,
-                    joint.origin.rpy,
-                    joint.axis, q[i])
-                joint_quaternion = quaternion.revolute(
-                    joint.origin.xyz,
-                    joint.origin.rpy,
-                    axis, q[i])
-                joint_dual_quat = dual_quaternion.revolute(
-                    joint.origin.xyz,
-                    joint.origin.rpy,
-                    axis, q[i])
-                T_fk = cs.mtimes(T_fk, joint_frame)
-                quaternion_fk = quaternion.product(
-                    quaternion_fk,
-                    joint_quaternion)
-                dual_quaternion_fk = dual_quaternion.product(
-                    dual_quaternion_fk,
-                    joint_dual_quat)
-                i += 1
-        T_fk = cs.Function("T_fk", [q], [T_fk], self.func_opts)
-        quaternion_fk = cs.Function("quaternion_fk",
-                                    [q], [quaternion_fk], self.func_opts)
-        dual_quaternion_fk = cs.Function("dual_quaternion_fk",
-                                         [q], [dual_quaternion_fk], self.func_opts)
-
-        return {
-            "joint_names": actuated_names,
-            "upper": upper,
-            "lower": lower,
-            "joint_list": joint_list,
-            "q": q,
-            "quaternion_fk": quaternion_fk,
-            "dual_quaternion_fk": dual_quaternion_fk,
-            "T_fk": T_fk
-        }

@@ -195,6 +195,20 @@ def spatial_mtimes(X_i, X_O):
     r = T_ix0[:3, 3]
     return spatial_transform(R,r)
 
+def inverse_spatial_transform(i_X_p):
+    "Returns p_X_i_"
+    E0 = i_X_p[:3,:3]
+    E4 = i_X_p[3:,3:] #E0 == E4
+    Er_x = -i_X_p[3:,:3]
+
+    p_X_i = cs.SX.zeros(6, 6)
+    E_T = E0.T
+    p_X_i[:3,:3] = E_T
+    p_X_i[3:,3:] = E_T
+
+    r_x_E_T = Er_x.T
+    p_X_i[3:,:3] = r_x_E_T
+    return p_X_i
  
 
 def rotation_matrix_to_euler(R, order='zyx'):
