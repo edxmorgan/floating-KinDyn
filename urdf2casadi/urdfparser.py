@@ -144,6 +144,76 @@ class URDFparser(object):
         return n_actuated
 
 
+    def approximate_workspace(self, root, tip, joint_limits, base_T, floating_base=False, num_samples=100000):
+        """
+        fk_func: a function that takes a vector of joint angles
+                and returns the [x, y, z] end-effector position.
+        joint_limits: list of (min_angle, max_angle) for each joint.
+        num_samples: how many random samples to draw in joint space.
+        """
+        baseT_xyz = cs.SX.sym('T_xyz', 3) # manipulator-vehicle mount link xyz origin 
+        baseT_rpy = cs.SX.sym('T_rpy', 3) # manipulator-vehicle mount link rpy origin
+        base_T = cs.vertcat(baseT_rpy, baseT_xyz) # transform from origin to 1st child
+
+        q = cs.SX.sym("q", n_joints)
+        x = cs.SX.sym('x')
+        y = cs.SX.sym('y')
+        z = cs.SX.sym('z')
+        tr_n = cs.vertcat(x, y, z) # x, y ,z of uv wrt to ned origin
+        thet = cs.SX.sym('thet')
+        phi = cs.SX.sym('phi')
+        psi = cs.SX.sym('psi')
+        eul = cs.vertcat(phi, thet, psi)  # NED euler angular velocity
+        p_n = cs.vertcat(tr_n, eul) # ned total states
+        ned_pose = cs.vertcat(p_n, q) #NED position
+
+        n_joints = self.get_n_joints(root, tip)
+        i_X_0s = self.forward_kinematics(root, tip, floating_base = floating_base)
+        H4 , R4, p4 = plucker.spatial_to_homogeneous(i_X_0s[-1])
+        T4_euler = cs.vertcat(p4, plucker.rotation_matrix_to_euler(R4, order='xyz'))
+        internal_fk_eval_euler = cs.Function("internal_fkeval_euler", [ned_pose, base_T], [T4_euler])
+        
+        # Arrays to track min/max
+        min_pos = np.array([np.inf, np.inf, np.inf])
+        max_pos = -np.array([np.inf, np.inf, np.inf])
+
+        # collect points for plotting
+        positions = np.zeros((num_samples, 3))
+
+        for i in range(num_samples):
+            # Sample joint angles
+            thetas = [
+                np.random.uniform(low=joint_limits[j][0], 
+                                high=joint_limits[j][1])
+                for j in range(n_joints)
+            ]
+
+            # Forward kinematics: end-effector position
+            config = cs.vertcat([0,0,0,0,0,0], thetas)
+            # config= cs.vertcat([0, 0, 0, 0, 0, 0, 1.07164, 2.05017, 1.065, 0.926672])
+            # print(f'configuration sent: {config}')
+            pose = internal_fk_eval_euler(config, base_T)
+            # print(f'pose rececievetn: {pose}')
+            x = pose[0]
+            y = pose[1]
+            z = pose[2]
+
+            # Store point for later plotting
+            positions[i] = [float(x), float(y), float(z)]
+
+            # Update min/max
+            if x < min_pos[0]: min_pos[0] = x
+            if x > max_pos[0]: max_pos[0] = x
+            if y < min_pos[1]: min_pos[1] = y
+            if y > max_pos[1]: max_pos[1] = y
+            if z < min_pos[2]: min_pos[2] = z
+            if z > max_pos[2]: max_pos[2] = z
+
+        # min_pos, max_pos define an axis-aligned bounding box
+        return min_pos, max_pos, positions
+
+
+
     def forward_kinematics(self, root, tip, floating_base = False):
         """Returns the inverse dynamics as a casadi function."""
         if self.robot_desc is None:

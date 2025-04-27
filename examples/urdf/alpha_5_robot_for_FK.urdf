@@ -18,7 +18,7 @@
     <inertial>
       <origin rpy="0 0 0" xyz="-75e-3 -6e-3 -3e-3"/>
       <mass value="0.341"/>
-      <inertia ixx="1" ixy="14.45e-6" ixz="-38.270e-6" iyy="1" iyz="3.14e-6" izz="1"/>
+      <inertia ixx="83.66e-6" ixy="14.45e-6" ixz="-38.270e-6" iyy="998.81e-6" iyz="3.14e-6" izz="1003.60e-6"/>
     </inertial>
     <visual>
       <geometry>
@@ -43,7 +43,7 @@
     <inertial>
       <origin rpy="0 0 0" xyz="5e-3 -1e-3 16e-3"/>
       <mass value="0.194"/>
-      <inertia ixx="1" ixy="-5.970e-6" ixz="-38.480e-6" iyy="1" iyz="-6.1e-6" izz="1"/>
+      <inertia ixx="139.1e-6" ixy="-5.970e-6" ixz="-38.480e-6" iyy="158.490e-6" iyz="-6.1e-6" izz="61.960e-6"/>
     </inertial>
     <visual>
       <geometry>
@@ -70,7 +70,7 @@
     <inertial>
       <origin rpy="0 0 0" xyz="73.563e-3 -0.091e-3 -0.734e-3"/>
       <mass value="0.429"/>
-      <inertia ixx="1" ixy="73.130e-6" ixz="-13.160e-6" iyy="1" iyz="0.030e-6" izz="1"/>
+      <inertia ixx="86.770e-6" ixy="73.130e-6" ixz="-13.160e-6" iyy="868.230e-6" iyz="0.030e-6" izz="891.460e-6"/>
     </inertial>
     <visual>
       <geometry>
@@ -109,7 +109,7 @@
     <inertial>
       <origin rpy="0 0 0" xyz="17e-3 -26e-3 2e-3"/>
       <mass value="0.115"/>
-      <inertia ixx="1" ixy="10.170e-6" ixz="1" iyy="28.300e-6" iyz="-5.980e-6" izz="1"/>
+      <inertia ixx="41.800e-6" ixy="10.170e-6" ixz="4.910e-6" iyy="28.300e-6" iyz="-5.980e-6" izz="45.020e-6"/>
     </inertial>
     <visual>
       <geometry>
@@ -129,15 +129,14 @@
     <parent link="alpha_m2_joint_link"/>
     <child link="alpha_m2_1_2_link"/>
     <origin rpy="0 0 3.14159" xyz="-0.04 0 -0.1453"/>
-    <axis xyz="0 -1 0"/>
-    <limit effort="9.0" upper="0.0" lower="-3.5" velocity="0.5"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="9.0" lower="0.2" upper="3.4" velocity="0.5"/>
   </joint>
-        
   <link name="alpha_m1_link">
     <inertial>
       <origin rpy="0 0 0" xyz="-0.030e-3 -3e-3 -98e-3"/>
       <mass value="0.333"/>
-      <inertia ixx="1" ixy="-1.970e-6" ixz="4.980e-6" iyy="1" iyz="97.900e-6" izz="1"/>
+      <inertia ixx="507.870e-6" ixy="-1.970e-6" ixz="4.980e-6" iyy="535.870e-6" iyz="97.900e-6" izz="76.000e-6"/>
     </inertial>
     <visual>
       <geometry>
