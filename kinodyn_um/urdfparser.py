@@ -92,9 +92,10 @@ class URDFparser(object):
         joint_limits: list of (min_angle, max_angle) for each joint.
         num_samples: how many random samples to draw in joint space.
         """
+        n_joints = self.get_n_joints(root, tip)
         baseT_xyz = cs.SX.sym('T_xyz', 3) # manipulator-vehicle mount link xyz origin 
         baseT_rpy = cs.SX.sym('T_rpy', 3) # manipulator-vehicle mount link rpy origin
-        base_T = cs.vertcat(baseT_rpy, baseT_xyz) # transform from origin to 1st child
+        base_T_sym = cs.vertcat(baseT_rpy, baseT_xyz) # transform from origin to 1st child
 
         q = cs.SX.sym("q", n_joints)
         x = cs.SX.sym('x')
@@ -106,13 +107,13 @@ class URDFparser(object):
         psi = cs.SX.sym('psi')
         eul = cs.vertcat(phi, thet, psi)  # NED euler angular velocity
         p_n = cs.vertcat(tr_n, eul) # ned total states
-        ned_pose = cs.vertcat(p_n, q) #NED position
+        ned_pose_sym = cs.vertcat(p_n, q) #NED position
 
-        n_joints = self.get_n_joints(root, tip)
-        i_X_0s = self.forward_kinematics(root, tip, floating_base = floating_base)
+        i_X_0fs = self.forward_kinematics(root, tip, floating_base = floating_base)
+        i_X_0s = i_X_0fs(q, tr_n, eul, baseT_xyz, baseT_rpy)
         H4 , R4, p4 = plucker.spatial_to_homogeneous(i_X_0s[-1])
         T4_euler = cs.vertcat(p4, plucker.rotation_matrix_to_euler(R4, order='xyz'))
-        internal_fk_eval_euler = cs.Function("internal_fkeval_euler", [ned_pose, base_T], [T4_euler])
+        internal_fk_eval_euler = cs.Function("internal_fkeval_euler", [ned_pose_sym, base_T_sym], [T4_euler])
         
         # Arrays to track min/max
         min_pos = np.array([np.inf, np.inf, np.inf])
@@ -152,6 +153,33 @@ class URDFparser(object):
 
         # min_pos, max_pos define an axis-aligned bounding box
         return min_pos, max_pos, positions
+
+    def _tool_Jq(self, root, tip):
+        """Internal the forward kinematics as a casadi function."""
+        if self.robot_desc is None:
+            raise ValueError('Robot description not loaded from urdf')
+
+        n_joints = self.get_n_joints(root, tip)
+        q = cs.SX.sym("q", n_joints)
+
+        i_X_p, Si, Ic , tip_ofs = self._model_calculation(root, tip, q)
+
+        for i in range(0, n_joints):
+            if i != 0:
+                i_X_0 = plucker.spatial_mtimes(i_X_p[i],i_X_0)
+            else:
+                i_X_0 = i_X_p[i]
+
+        endeff_X_0 = plucker.spatial_mtimes( tip_ofs , i_X_0)
+
+        H_eff , R_eff, p_eff = plucker.spatial_to_homogeneous(endeff_X_0)
+        Fk_eff = cs.vertcat(plucker.rotation_matrix_to_euler(R_eff, order='xyz'), p_eff)
+
+        J = cs.jacobian(Fk_eff, q)
+
+        J_tool = cs.Function("J_tool", [q], [J] , self.func_opts)
+        return J_tool
+
 
     def forward_kinematics(self, root, tip, floating_base = False):
         """Returns the inverse dynamics as a casadi function."""
@@ -525,6 +553,47 @@ class URDFparser(object):
         C = cs.Function("C", [q, q_dot], [tau], self.func_opts)
         return C
 
+    def _add_rotor_inertia(self, Ic, Sis, G_Jmotor):
+        """
+        Add reflected rotor inertia along each revolute joint axis.
+
+        Ic         : list of 6×6 SX matrices  (output of _model_calculation)
+        Sis        : list of 6×1 SX vectors   (motion subspaces)
+        gear_ratio : n×1 SX   (G_i)
+        Jmotor     : n×1 SX   (motor inertias J_m,i)
+        -------------------------------------------------------------
+        Ic[i] ← Ic[i] + G_i²·J_m,i · (ê_i ê_iᵀ)   if the joint is revolute
+        """
+        n = len(Sis)
+        for i in range(n):
+            axis = Sis[i][:3]                          # rotational part
+            if cs.norm_2(axis) < 1e-9:                 # prismatic joint → skip
+                print('prismatic joint found')
+                continue
+            e_hat = axis / cs.norm_2(axis)             # unit axis ê_i
+            Jr    = G_Jmotor[i]     # reflected inertia (scalar)
+
+            # rank-1 3×3 matrix Jr·ê êᵀ
+            rot_add = Jr * cs.mtimes(e_hat, e_hat.T)   # (3×3)
+
+            # build a full 6×6 matrix to add
+            deltaIc = cs.blockcat([[rot_add,                cs.SX.zeros(3,3)],
+                                [cs.SX.zeros(3,3),       cs.SX.zeros(3,3)]])
+
+            Ic[i] = Ic[i] + deltaIc                       # update link-i inertia
+
+        return Ic
+    
+    def _add_payload(self, root, tip, q, m_load):
+        # FK (6×1 transform) and 6×n geometric Jacobian
+        J_tool_func = self._tool_Jq(root, tip)
+        J_tool = J_tool_func(q)
+        #  Payload force
+        g_val  = -9.81              # m/s²
+        F_payload = cs.vertcat(0, 0, 0, 0, 0, m_load*g_val)
+        tau_payload = cs.mtimes(J_tool.T, F_payload) # τ = JᵀF
+        return tau_payload
+
     def get_forward_dynamics_crba(self, root, tip, f_ext=None):
         """Returns the forward dynamics as a casadi function by
         solving the Lagrangian eq. of motion.  OBS! Not appropriate
@@ -544,6 +613,8 @@ class URDFparser(object):
 
         viscous = cs.SX.sym('visc', n_joints)
         coulomb = cs.SX.sym('coul', n_joints)
+        I_Grotor  = cs.SX.sym("Jm",    n_joints)             # rotor inertias
+        m_load  = cs.SX.sym("m_load")
 
         B_vec = cs.vertcat(viscous)
         F_vec = cs.vertcat(coulomb)
@@ -553,14 +624,14 @@ class URDFparser(object):
         tau_fric = cs.diag(B_vec) @ q_dot + cs.diag(F_vec) @ sgn_qdot
 
         i_X_p, Si, Ic, tip_ofs  = self._model_calculation(root, tip, q)
-
+        Ic = self._add_rotor_inertia(Ic, Si, I_Grotor) 
         M = self._get_M(Ic, i_X_p, Si, n_joints, q)
         M_inv = cs.solve(M, cs.SX.eye(M.size1()))
 
         C = self._get_C(i_X_p, Si, Ic, q, q_dot, n_joints, g_vec, f_ext)
-
-        q_ddot = cs.mtimes(M_inv, (tau - tau_fric - C))
-        q_ddot = cs.Function("q_ddot", [q, q_dot, tau, gravity, viscous, coulomb],
+        tau_Pload = self._add_payload(root, tip, q, m_load)
+        q_ddot = cs.mtimes(M_inv, (tau - tau_fric - C - tau_Pload))
+        q_ddot = cs.Function("q_ddot", [q, q_dot, tau, gravity, viscous, coulomb, I_Grotor, m_load],
                              [q_ddot], self.func_opts)
 
         return q_ddot
