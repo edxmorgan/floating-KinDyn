@@ -4,9 +4,9 @@ A library for generating the kinematics and dynamics of electric underwater robo
 <img src="./resources/uvman.jpg" width="420"/>
 
 ## Todo/Implementation status
-- [x] [floating-base manipulator forward dynamics](https://github.com/edxmorgan/kinodynamic-underwater-manipulator/blob/main/usage/my_robot_fd.ipynb)
-- [ ] [floating-base manipulator inverse dynamics]()
-- [x] [floating-base manipulator forward kinematics](https://github.com/edxmorgan/kinodynamic-underwater-manipulator/blob/main/usage/my_robot_fk.ipynb)
+- [x] [manipulator forward dynamics](https://github.com/edxmorgan/kinodynamic-underwater-manipulator/blob/main/usage/my_robot_fd.ipynb)
+- [ ] [manipulator inverse dynamics]()
+- [x] [manipulator forward kinematics](https://github.com/edxmorgan/kinodynamic-underwater-manipulator/blob/main/usage/my_robot_fk.ipynb)
 
 For usage examples of Diff_UVMS, see [Jupyter notebook](https://github.com/edxmorgan/kinodynamic-underwater-manipulator/tree/main/usage).
 
