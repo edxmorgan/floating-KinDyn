@@ -175,7 +175,13 @@ class URDFparser(object):
         H_eff , R_eff, p_eff = plucker.spatial_to_homogeneous(endeff_X_0)
         Fk_eff = cs.vertcat(plucker.rotation_matrix_to_euler(R_eff, order='xyz'), p_eff)
 
-        J = cs.jacobian(Fk_eff, q)
+        coeffs = cs.vertcat(*(S.T @ cs.fabs(S) for S in Si))      # n×1 SX
+        q_on_axis = cs.diag(q) @ coeffs
+
+        Fk_eff_fun = cs.Function("Fk_eff", [q], [Fk_eff] , self.func_opts)
+        Fk_eff_ = Fk_eff_fun(q_on_axis)
+
+        J = cs.jacobian(Fk_eff_, q)
 
         J_tool = cs.Function("J_tool", [q], [J] , self.func_opts)
         return J_tool
@@ -217,10 +223,17 @@ class URDFparser(object):
             
             i_X_0s.append(i_X_0)  # transformation of joint i wrt origin 0
 
-        forward_kin = plucker.spatial_mtimes( tip_ofs , i_X_0)
+        forward_kin = plucker.spatial_mtimes(tip_ofs , i_X_0)
         i_X_0s.append(forward_kin)
         i_X_f = cs.Function("i_X_f", [q, tr_n, eul, baseT_xyz, baseT_rpy], i_X_0s , self.func_opts)
-        return i_X_f
+
+        coeffs = cs.vertcat(*(S.T @ cs.fabs(S) for S in Si))      # n×1 SX
+        q_on_axis = cs.diag(q) @ coeffs
+
+        i_X_0s_ = i_X_f(q_on_axis, tr_n, eul, baseT_xyz, baseT_rpy)
+
+        i_X_f_ = cs.Function("i_X_f_", [q, tr_n, eul, baseT_xyz, baseT_rpy], i_X_0s_ , self.func_opts)
+        return i_X_f_
 
     def _model_calculation(self, root, tip, q):
         """Calculates and returns model information needed in the
