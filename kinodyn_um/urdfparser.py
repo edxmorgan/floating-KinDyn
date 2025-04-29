@@ -154,15 +154,10 @@ class URDFparser(object):
         # min_pos, max_pos define an axis-aligned bounding box
         return min_pos, max_pos, positions
 
-    def _tool_Jq(self, root, tip):
+    def _tool_Jq(self, n_joints, i_X_p, Si, tip_ofs, q):
         """Internal the forward kinematics as a casadi function."""
         if self.robot_desc is None:
             raise ValueError('Robot description not loaded from urdf')
-
-        n_joints = self.get_n_joints(root, tip)
-        q = cs.SX.sym("q", n_joints)
-
-        i_X_p, Si, Ic , tip_ofs = self._model_calculation(root, tip, q)
 
         for i in range(0, n_joints):
             if i != 0:
@@ -597,13 +592,12 @@ class URDFparser(object):
 
         return Ic
     
-    def _add_payload(self, root, tip, q, m_load):
+    def _add_payload(self, n_joints, i_X_p, Si, tip_ofs, q,  g, m_load):
         # FK (6×1 transform) and 6×n geometric Jacobian
-        J_tool_func = self._tool_Jq(root, tip)
+        J_tool_func = self._tool_Jq(n_joints, i_X_p, Si, tip_ofs, q)
         J_tool = J_tool_func(q)
         #  Payload force
-        g_val  = -9.81              # m/s²
-        F_payload = cs.vertcat(0, 0, 0, 0, 0, m_load*g_val)
+        F_payload = cs.vertcat(0, 0, 0, 0, 0, m_load*g)
         tau_payload = cs.mtimes(J_tool.T, F_payload) # τ = JᵀF
         return tau_payload
 
@@ -622,6 +616,7 @@ class URDFparser(object):
         q_ddot = cs.SX.zeros(n_joints)
 
         gravity = cs.SX.sym("g")
+        k = cs.SX.sym("k") # sharpness of tanh: ↑k → closer to true sign()
         g_vec = cs.vertcat(0,0,gravity)
 
         viscous = cs.SX.sym('visc', n_joints)
@@ -631,8 +626,7 @@ class URDFparser(object):
 
         B_vec = cs.vertcat(viscous)
         F_vec = cs.vertcat(coulomb)
-
-        k = 50.0                  # sharpness of tanh: ↑k → closer to true sign()
+               
         sgn_qdot = cs.tanh(k*q_dot)
         tau_fric = cs.diag(B_vec) @ q_dot + cs.diag(F_vec) @ sgn_qdot
 
@@ -642,9 +636,9 @@ class URDFparser(object):
         M_inv = cs.solve(M, cs.SX.eye(M.size1()))
 
         C = self._get_C(i_X_p, Si, Ic, q, q_dot, n_joints, g_vec, f_ext)
-        tau_Pload = self._add_payload(root, tip, q, m_load)
+        tau_Pload = self._add_payload(n_joints, i_X_p, Si, tip_ofs, q, gravity, m_load)
         q_ddot = cs.mtimes(M_inv, (tau - tau_fric - C - tau_Pload))
-        q_ddot = cs.Function("q_ddot", [q, q_dot, tau, gravity, viscous, coulomb, I_Grotor, m_load],
+        q_ddot = cs.Function("q_ddot", [q, q_dot, tau, gravity, k, viscous, coulomb, I_Grotor, m_load],
                              [q_ddot], self.func_opts)
 
         return q_ddot
