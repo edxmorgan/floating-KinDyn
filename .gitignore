@@ -103,3 +103,4 @@ ENV/
 *.o
 *.c
 *.casadi
+*.dylib
