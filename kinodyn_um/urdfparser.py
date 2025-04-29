@@ -619,23 +619,21 @@ class URDFparser(object):
         g_vec = cs.vertcat(0,0,gravity)
         m_load  = cs.SX.sym("m_load")
 
-        k        = cs.SX.sym("k", n_joints)          # sharpness of tanh: ↑k → closer to true sign()
+        k        = cs.SX.sym("k", n_joints, 2)          # sharpness of tanh: ↑k → closer to true sign()
         viscous  = cs.SX.sym("visc",   n_joints, 2)
         coulomb  = cs.SX.sym("coul",   n_joints, 2)
         I_Grotor = cs.SX.sym("Jm",     n_joints, 2)   # rotor inertias
 
+        forward = cs.sign(tau) >= 0
 
-        sgn_qdot   = cs.tanh(k * q_dot)
-        w_fwd = 0.5 * (1 + sgn_qdot)
-        w_rev = 1.0 - w_fwd
-
-        B_vec =  w_fwd * viscous[:, 0] + w_rev * viscous[:, 1]
-        F_vec =  w_fwd * coulomb[:, 0] + w_rev * coulomb[:, 1]
-
+        # directional dependent parameters
+        B_vec  = cs.if_else(forward, viscous[:, 0], viscous[:, 1])
+        F_vec  = cs.if_else(forward, coulomb[:, 0],  coulomb[:, 1])
+        Jm_vec = cs.if_else(forward, I_Grotor[:, 0], I_Grotor[:, 1])
+        k_vec  = cs.if_else(forward, k[:, 0],        k[:, 1])
+               
+        sgn_qdot = cs.tanh(k_vec * q_dot)
         tau_fric = cs.diag(B_vec) @ q_dot + cs.diag(F_vec) @ sgn_qdot
-
-        # using direction-dependent rotor inertia
-        Jm_vec = w_fwd * I_Grotor[:, 0] + w_rev * I_Grotor[:, 1]
 
         i_X_p, Si, Ic, tip_ofs  = self._model_calculation(root, tip, q)
         Ic = self._add_rotor_inertia(Ic, Si, Jm_vec)
