@@ -597,7 +597,7 @@ class URDFparser(object):
         J_tool_func = self._tool_Jq(n_joints, i_X_p, Si, tip_ofs, q)
         J_tool = J_tool_func(q)
         #  Payload force
-        F_payload = cs.vertcat(0, 0, 0, 0, 0, W_load)
+        F_payload = cs.vertcat(0, 0, 0, 0, 0, -W_load)
         tau_payload = cs.mtimes(J_tool.T, F_payload) # τ = JᵀF
         return tau_payload
 
