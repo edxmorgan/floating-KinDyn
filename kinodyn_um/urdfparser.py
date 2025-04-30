@@ -592,12 +592,12 @@ class URDFparser(object):
 
         return Ic
     
-    def _add_payload(self, n_joints, i_X_p, Si, tip_ofs, q,  W_load):
+    def _add_payload(self, n_joints, i_X_p, Si, tip_ofs, q, g,  payload_props):
         # FK (6×1 transform) and 6×n geometric Jacobian
         J_tool_func = self._tool_Jq(n_joints, i_X_p, Si, tip_ofs, q)
         J_tool = J_tool_func(q)
         #  Payload force
-        F_payload = cs.vertcat(0, 0, 0, 0, 0, -W_load)
+        F_payload = cs.vertcat(0, 0, 0, 0, 0, payload_props[0]*g)
         tau_payload = cs.mtimes(J_tool.T, F_payload) # τ = JᵀF
         return tau_payload
 
@@ -617,8 +617,8 @@ class URDFparser(object):
 
         gravity = cs.SX.sym("g")
         g_vec = cs.vertcat(0,0,gravity)
-        W_load  = cs.SX.sym("W_load")
-
+        payload_props  = cs.SX.sym("payload_props", 4) # mass, Ixx, Iyy, Izz
+ 
         k        = cs.SX.sym("k", n_joints, 2)          # sharpness of tanh: ↑k → closer to true sign()
         viscous  = cs.SX.sym("visc",   n_joints, 2)
         coulomb  = cs.SX.sym("coul",   n_joints, 2)
@@ -641,11 +641,11 @@ class URDFparser(object):
         M_inv = cs.solve(M, cs.SX.eye(M.size1()))
 
         C = self._get_C(i_X_p, Si, Ic, q, q_dot, n_joints, g_vec, f_ext)
-        tau_Pload = self._add_payload(n_joints, i_X_p, Si, tip_ofs, q, W_load)
+        tau_Pload = self._add_payload(n_joints, i_X_p, Si, tip_ofs, q, gravity, payload_props)
         
         q_ddot = cs.mtimes(M_inv, (tau - tau_fric - C - tau_Pload))
         
-        q_ddot_f = cs.Function("q_ddot", [q, q_dot, tau, gravity, k, viscous, coulomb, I_Grotor, W_load],
+        q_ddot_f = cs.Function("q_ddot", [q, q_dot, tau, gravity, k, viscous, coulomb, I_Grotor, payload_props],
                              [q_ddot], self.func_opts)
         
 
