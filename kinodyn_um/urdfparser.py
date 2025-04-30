@@ -399,7 +399,7 @@ class URDFparser(object):
         tau = cs.Function("C", [q, q_dot, q_ddot], [tau], self.func_opts)
         return tau
 
-    def get_gravity_rnea(self, root, tip, gravity):
+    def _get_gravity_rnea(self, root, tip):
         """Returns the gravitational term as a casadi function."""
 
         if self.robot_desc is None:
@@ -408,10 +408,10 @@ class URDFparser(object):
         n_joints = self.get_n_joints(root, tip)
         q = cs.SX.sym("q", n_joints)
         i_X_p, Si, Ic , tip_ofs = self._model_calculation(root, tip, q)
-
+        gravity = cs.SX.sym("g",3)
         v = []
         a = []
-        ag = cs.SX([0., 0., 0., gravity[0], gravity[1], gravity[2]])
+        ag = np.array([0., 0., 0., gravity[0], gravity[1], gravity[2]])
         f = []
         tau = cs.SX.zeros(n_joints)
 
@@ -427,9 +427,9 @@ class URDFparser(object):
             if i != 0:
                 f[i-1] = f[i-1] + cs.mtimes(i_X_p[i].T, f[i])
 
-        tau = cs.Function("C", [q], [tau],
+        g_tau = cs.Function("G", [q, gravity], [tau],
                           self.func_opts)
-        return tau
+        return g_tau
 
     def _get_M(self, Ic, i_X_p, Si, n_joints, q):
         """Internal function for calculating the inertia matrix."""
@@ -592,12 +592,12 @@ class URDFparser(object):
 
         return Ic
     
-    def _add_payload(self, n_joints, i_X_p, Si, tip_ofs, q,  g, m_load):
+    def _add_payload(self, n_joints, i_X_p, Si, tip_ofs, q,  W_load):
         # FK (6×1 transform) and 6×n geometric Jacobian
         J_tool_func = self._tool_Jq(n_joints, i_X_p, Si, tip_ofs, q)
         J_tool = J_tool_func(q)
         #  Payload force
-        F_payload = cs.vertcat(0, 0, 0, 0, 0, m_load*g)
+        F_payload = cs.vertcat(0, 0, 0, 0, 0, W_load)
         tau_payload = cs.mtimes(J_tool.T, F_payload) # τ = JᵀF
         return tau_payload
 
@@ -617,7 +617,7 @@ class URDFparser(object):
 
         gravity = cs.SX.sym("g")
         g_vec = cs.vertcat(0,0,gravity)
-        m_load  = cs.SX.sym("m_load")
+        W_load  = cs.SX.sym("W_load")
 
         k        = cs.SX.sym("k", n_joints, 2)          # sharpness of tanh: ↑k → closer to true sign()
         viscous  = cs.SX.sym("visc",   n_joints, 2)
@@ -641,9 +641,12 @@ class URDFparser(object):
         M_inv = cs.solve(M, cs.SX.eye(M.size1()))
 
         C = self._get_C(i_X_p, Si, Ic, q, q_dot, n_joints, g_vec, f_ext)
-        tau_Pload = self._add_payload(n_joints, i_X_p, Si, tip_ofs, q, gravity, m_load)
+        tau_Pload = self._add_payload(n_joints, i_X_p, Si, tip_ofs, q, W_load)
+        
         q_ddot = cs.mtimes(M_inv, (tau - tau_fric - C - tau_Pload))
-        q_ddot = cs.Function("q_ddot", [q, q_dot, tau, gravity, k, viscous, coulomb, I_Grotor, m_load],
+        
+        q_ddot_f = cs.Function("q_ddot", [q, q_dot, tau, gravity, k, viscous, coulomb, I_Grotor, W_load],
                              [q_ddot], self.func_opts)
+        
 
-        return q_ddot
+        return q_ddot_f
