@@ -220,14 +220,19 @@ class URDFparser(object):
 
         forward_kin = plucker.spatial_mtimes(tip_ofs , i_X_0)
         i_X_0s.append(forward_kin)
-        i_X_f = cs.Function("i_X_f", [q, tr_n, eul, baseT_xyz, baseT_rpy], i_X_0s , self.func_opts)
 
         coeffs = cs.vertcat(*(S.T @ cs.fabs(S) for S in Si))      # n×1 SX
         q_on_axis = cs.diag(q) @ coeffs
 
-        i_X_0s_ = i_X_f(q_on_axis, tr_n, eul, baseT_xyz, baseT_rpy)
+        if floating_base:
+            i_X_f = cs.Function("i_X_f", [q, tr_n, eul, baseT_xyz, baseT_rpy], i_X_0s , self.func_opts)
+            i_X_0s_ = i_X_f(q_on_axis, tr_n, eul, baseT_xyz, baseT_rpy)
+            i_X_f_ = cs.Function("i_X_f_", [q, tr_n, eul, baseT_xyz, baseT_rpy], i_X_0s_ , self.func_opts)
+        else:
+            i_X_f = cs.Function("i_X_f", [q], i_X_0s , self.func_opts)
+            i_X_0s_ = i_X_f(q_on_axis)
+            i_X_f_ = cs.Function("i_X_f_", [q], i_X_0s_ , self.func_opts)
 
-        i_X_f_ = cs.Function("i_X_f_", [q, tr_n, eul, baseT_xyz, baseT_rpy], i_X_0s_ , self.func_opts)
         return i_X_f_
 
     def _model_calculation(self, root, tip, q):
