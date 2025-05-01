@@ -600,6 +600,27 @@ class URDFparser(object):
         F_payload = cs.vertcat(0, 0, 0, 0, 0, payload_props[0]*g)
         tau_payload = cs.mtimes(J_tool.T, F_payload) # τ = JᵀF
         return tau_payload
+    
+    def get_active_complaince_tau(self, root, tip):
+        if self.robot_desc is None:
+            raise ValueError('Robot description not loaded from urdf')
+        n_joints = self.get_n_joints(root, tip)
+        q = cs.SX.sym("q", n_joints)
+        gravity = cs.SX.sym("g")
+        g_vec = cs.vertcat(0,0,gravity)
+        payload_props  = cs.SX.sym("payload_props", 4) # mass, Ixx, Iyy, Izz
+
+        tau_g = self._get_gravity_rnea(root, tip)      # G(q,g) → τ_g
+        G_tau = tau_g(q, g_vec)
+
+        i_X_p, Si, Ic, tip_ofs  = self._model_calculation(root, tip, q)
+        tau_pl = self._add_payload(n_joints, i_X_p, Si, tip_ofs, q, gravity, payload_props)
+
+        tau_comp = G_tau + tau_pl                     # ≈ “motor holds the arm”
+        tau_comp_f = cs.Function("tau_comp", [q, gravity, payload_props],
+                             [tau_comp], self.func_opts)
+        return tau_comp_f
+
 
     def get_forward_dynamics_crba(self, root, tip, f_ext=None):
         """Returns the forward dynamics as a casadi function by
@@ -641,9 +662,10 @@ class URDFparser(object):
         M_inv = cs.solve(M, cs.SX.eye(M.size1()))
 
         C = self._get_C(i_X_p, Si, Ic, q, q_dot, n_joints, g_vec, f_ext)
-        tau_Pload = self._add_payload(n_joints, i_X_p, Si, tip_ofs, q, gravity, payload_props)
+        tau_pl = self._add_payload(n_joints, i_X_p, Si, tip_ofs, q, gravity, payload_props)
+
         
-        q_ddot = cs.mtimes(M_inv, (tau - tau_fric - C - tau_Pload))
+        q_ddot = cs.mtimes(M_inv, (tau - tau_fric - C - tau_pl))
         
         q_ddot_f = cs.Function("q_ddot", [q, q_dot, tau, gravity, k, viscous, coulomb, I_Grotor, payload_props],
                              [q_ddot], self.func_opts)
