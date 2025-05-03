@@ -62,16 +62,14 @@ OBJ+= $(OCP_OBJ)
 EXTERNAL_DIR=
 EXTERNAL_LIB=
 
-INCLUDE_PATH = /home/mrrobot/acados/include
-LIB_PATH = /home/mrrobot/acados/lib
+INCLUDE_PATH = /Users/edwardmorgan/acados/include
+LIB_PATH = /Users/edwardmorgan/acados/lib
 
 # preprocessor flags for make's implicit rules
-CPPFLAGS += -DACADOS_WITH_QPOASES
 CPPFLAGS+= -I$(INCLUDE_PATH)
 CPPFLAGS+= -I$(INCLUDE_PATH)/acados
 CPPFLAGS+= -I$(INCLUDE_PATH)/blasfeo/include
 CPPFLAGS+= -I$(INCLUDE_PATH)/hpipm/include
-CPPFLAGS+= -I $(INCLUDE_PATH)/qpOASES_e/
 
 
 # define the c-compiler flags for make's implicit rules
@@ -89,11 +87,11 @@ LDLIBS+= -lacados
 LDLIBS+= -lhpipm
 LDLIBS+= -lblasfeo
 LDLIBS+= -lm
-LDLIBS+= -lqpOASES_e
+LDLIBS+= 
 
 # libraries
-LIBACADOS_SOLVER=libacados_solver_arm_mhe.so
-LIBACADOS_OCP_SOLVER=libacados_ocp_solver_arm_mhe.so
+LIBACADOS_SOLVER=libacados_solver_arm_mhe.dylib
+LIBACADOS_OCP_SOLVER=libacados_ocp_solver_arm_mhe.dylib
 
 # virtual targets
 .PHONY : all clean
@@ -119,7 +117,7 @@ ocp_cython_c: ocp_shared_lib
 	-o acados_ocp_solver_pyx.c \
 	-I $(INCLUDE_PATH)/../interfaces/acados_template/acados_template \
 	$(INCLUDE_PATH)/../interfaces/acados_template/acados_template/acados_ocp_solver_pyx.pyx \
-	-I /home/mrrobot/dev_ws/src/kinodynamic-underwater-manipulator/usage/c_generated_code \
+	-I /Users/edwardmorgan/dev/kinodynamic-underwater-manipulator/usage/c_generated_code \
 
 ocp_cython_o: ocp_cython_c
 	$(CC) $(ACADOS_FLAGS) -c -O2 \
@@ -128,16 +126,16 @@ ocp_cython_o: ocp_cython_c
 	-I $(INCLUDE_PATH)/blasfeo/include/ \
 	-I $(INCLUDE_PATH)/hpipm/include/ \
 	-I $(INCLUDE_PATH) \
-	-I /home/mrrobot/.local/lib/python3.10/site-packages/numpy/core/include \
-	-I /usr/include/python3.10 \
+	-I /Users/edwardmorgan/Library/Python/3.9/lib/python/site-packages/numpy/core/include \
+	-I /Library/Python/3.9/include \
 	acados_ocp_solver_pyx.c \
 
 ocp_cython: ocp_cython_o
 	$(CC) $(ACADOS_FLAGS) -shared \
-	-o acados_ocp_solver_pyx.so \
+	-o acados_ocp_solver_pyx.dylib \
 	-Wl,-rpath=$(LIB_PATH) \
 	acados_ocp_solver_pyx.o \
-	$(abspath .)/libacados_ocp_solver_arm_mhe.so \
+	$(abspath .)/libacados_ocp_solver_arm_mhe.dylib \
 	$(LDFLAGS) $(LDLIBS)
 
 
@@ -152,9 +150,9 @@ clean_ocp_shared_lib:
 	$(RM) $(OCP_OBJ)
 
 clean_ocp_cython:
-	$(RM) libacados_ocp_solver_arm_mhe.so
+	$(RM) libacados_ocp_solver_arm_mhe.dylib
 	$(RM) acados_solver_arm_mhe.o
-	$(RM) acados_ocp_solver_pyx.so
+	$(RM) acados_ocp_solver_pyx.dylib
 	$(RM) acados_ocp_solver_pyx.o
 
 

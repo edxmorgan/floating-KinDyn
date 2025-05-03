@@ -38,12 +38,12 @@
 
 #define ARM_MHE_NX     40
 #define ARM_MHE_NZ     0
-#define ARM_MHE_NU     4
+#define ARM_MHE_NU     36
 #define ARM_MHE_NP     0
 #define ARM_MHE_NP_GLOBAL     0
 #define ARM_MHE_NBX    0
 #define ARM_MHE_NBX0   40
-#define ARM_MHE_NBU    0
+#define ARM_MHE_NBU    4
 #define ARM_MHE_NSBX   0
 #define ARM_MHE_NSBU   0
 #define ARM_MHE_NSH    0
@@ -61,9 +61,9 @@
 #define ARM_MHE_NG     0
 #define ARM_MHE_NBXN   0
 #define ARM_MHE_NGN    0
-#define ARM_MHE_NY0    12
-#define ARM_MHE_NY     12
-#define ARM_MHE_NYN    8
+#define ARM_MHE_NY0    40
+#define ARM_MHE_NY     40
+#define ARM_MHE_NYN    4
 #define ARM_MHE_N      20
 #define ARM_MHE_NH     0
 #define ARM_MHE_NHN    0
