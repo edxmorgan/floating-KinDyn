@@ -677,3 +677,133 @@ class URDFparser(object):
         
 
         return q_ddot_f
+    
+    def forward_simulation(self, root, tip):
+        if self.robot_desc is None:
+            raise ValueError('Robot description not loaded from urdf')
+        n_joints = self.get_n_joints(root, tip)
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # 2. CasADi symbols
+        # ─────────────────────────────────────────────────────────────────────────────
+        q     = cs.MX.sym('q',     n_joints)        # joint positions
+        q_dot = cs.MX.sym('q_dot', n_joints)        # joint velocities
+        tau_cmd = cs.MX.sym('tau_cmd', n_joints)   # *controller* torque
+        dt    = cs.MX.sym('dt')                     # integration step (s)
+        g     = cs.MX.sym('g')                      # gravity acceleration (e.g. -9.81)
+
+        k        = cs.MX.sym('k_',        n_joints, 2)   # tanh sharpness coefficients
+        viscous  = cs.MX.sym('viscous',   n_joints, 2)   # viscous friction
+        coulomb  = cs.MX.sym('coulomb',   n_joints, 2)   # Coulomb friction
+        I_Grotor = cs.MX.sym('I_Grotor',  n_joints, 2)   # rotor inertias
+        payload_props  = cs.MX.sym("payload_props", 4) # mass, Ixx, Iyy, Izz
+
+        lower_joint_limit = cs.MX.sym('lower_limit', n_joints)
+        upper_joint_limit = cs.MX.sym('upper_limit', n_joints)
+        EPS_TORQUE = cs.MX.sym('eps_torque', n_joints)
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # 3. Forward dynamics (from CRBA model produced by urdf2casadi)
+        # ─────────────────────────────────────────────────────────────────────────────
+        q_ddot_fun = self.get_forward_dynamics_crba(root, tip) # acceleration
+        tau_hold_fun = self.get_active_complaince_tau(root, tip)  # gravity+payload
+
+        # ------------------------------------------------------------------
+        # 4. Holding torque (independent of tau_cmd)
+        # ------------------------------------------------------------------
+        tau_hold = tau_hold_fun(q, g, payload_props)
+
+        # Decision: if |tau_cmd[i]| < ε  →  use tau_hold[i]
+        use_hold   = cs.fabs(tau_cmd) < EPS_TORQUE
+        tau_eff    = cs.if_else(use_hold, tau_hold, tau_cmd)
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # 6. Joint‑limit saturation with recovery
+        #    Freeze motion only if it is trying to go farther OUT of bounds.
+        # ─────────────────────────────────────────────────────────────────────────────
+        EPS = 1e-1
+        tau_sat = cs.MX.zeros(n_joints)
+        v_guard = cs.MX.zeros(n_joints)
+
+        for i in range(n_joints):
+
+            above = q[i] >= upper_joint_limit[i] - EPS
+            below = q[i] <= lower_joint_limit[i] + EPS
+
+            # Outward velocity?
+            vel_out_high = cs.logic_and(above, q_dot[i] > 0)
+            vel_out_low  = cs.logic_and(below, q_dot[i] < 0)
+
+            # “Adds energy” if torque points the same way as the outward motion
+            adds_energy_high = cs.logic_and(vel_out_high, tau_eff[i] >  0)
+            adds_energy_low  = cs.logic_and(vel_out_low,  tau_eff[i] <  0)
+
+            # Also block any *static* outward push (velocity zero but torque outward)
+            push_out_high = cs.logic_and(above, tau_eff[i] > 0)
+            push_out_low  = cs.logic_and(below, tau_eff[i] < 0)
+
+            violate = cs.logic_or(push_out_high, push_out_low)
+            violate = cs.logic_or(violate,       adds_energy_high)
+            violate = cs.logic_or(violate,       adds_energy_low)
+
+            tau_sat[i] = cs.if_else(violate, 0, tau_eff[i])
+
+            v_guard[i] = cs.if_else(cs.logic_or(vel_out_high, vel_out_low), 0, q_dot[i])
+
+
+        # ------------------------------------------------------------------
+        # 5. Forward dynamics with the *selected* torque
+        # ------------------------------------------------------------------
+        q_ddot = q_ddot_fun(q, v_guard, tau_sat, g, k, viscous, coulomb, I_Grotor, payload_props)
+            
+        # ------------------------------------------------------------------
+        # 7. State vector and ODE
+        #     • q-dot derivative uses v_guard  ⇒ no outward drift
+        #     • q_dot derivative uses q_ddot   ⇒ real braking dynamics
+        # ------------------------------------------------------------------
+        x    = cs.vertcat(q,  q_dot)
+        xdot = cs.vertcat(v_guard, q_ddot) * dt
+
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        # 8. Parameter vector (keep one long vector to avoid argument mismatch)
+        # ─────────────────────────────────────────────────────────────────────────────
+        p = cs.vertcat(
+                dt,
+                g,
+                cs.reshape(k,       -1, 1),
+                cs.reshape(viscous, -1, 1),
+                cs.reshape(coulomb, -1, 1),
+                cs.reshape(I_Grotor,-1, 1),
+                payload_props,
+                lower_joint_limit,
+                upper_joint_limit,
+                EPS_TORQUE)
+
+
+        # # ─────────────────────────────────────────────────────────────────────────────
+        # # 7. Integrator (Runge–Kutta over [0,1])
+        # # ─────────────────────────────────────────────────────────────────────────────
+        dae  = {'x': x, 'ode': xdot, 'p': p, 'u': tau_cmd}
+        opts = {
+            'simplify': True,
+            'number_of_finite_elements': 200,
+        }
+
+        intg = cs.integrator('intg', 'rk', dae, 0, 1, opts)
+
+
+                            
+        # ─────────────────────────────────────────────────────────────────────────────
+        # 8. Next‑state function and file export
+        # ─────────────────────────────────────────────────────────────────────────────
+        x_next = intg(x0=x, u=tau_cmd, p=p)['xf']
+        p_sim =cs.vertcat(
+            cs.reshape(k,   -1, 1), 
+            cs.reshape(viscous,   -1, 1),
+            cs.reshape(coulomb,   -1, 1),
+            cs.reshape(I_Grotor,  -1, 1)
+                )
+
+        F_next = cs.Function('Mnext', [x, tau_cmd, dt, g, payload_props, p_sim , lower_joint_limit, upper_joint_limit, EPS_TORQUE], [x_next, tau_sat], self.func_opts)
+        return F_next
