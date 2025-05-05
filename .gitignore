@@ -104,3 +104,5 @@ ENV/
 *.c
 *.casadi
 *.dylib
+
+!J_e_f.casadi
