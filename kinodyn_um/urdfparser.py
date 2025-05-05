@@ -787,7 +787,7 @@ class URDFparser(object):
         dae  = {'x': x, 'ode': xdot, 'p': p, 'u': tau_cmd}
         opts = {
             'simplify': True,
-            'number_of_finite_elements': 200,
+            'number_of_finite_elements': 100,
         }
 
         intg = cs.integrator('intg', 'rk', dae, 0, 1, opts)
@@ -805,5 +805,5 @@ class URDFparser(object):
             cs.reshape(I_Grotor,  -1, 1)
                 )
 
-        F_next = cs.Function('Mnext', [x, tau_cmd, dt, g, payload_props, p_sim , lower_joint_limit, upper_joint_limit, EPS_TORQUE], [x_next, tau_sat], self.func_opts)
+        F_next = cs.Function('Mnext', [x, tau_cmd, dt, g, payload_props, p_sim , lower_joint_limit, upper_joint_limit, EPS_TORQUE], [x_next], self.func_opts)
         return F_next
