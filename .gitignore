@@ -106,3 +106,4 @@ ENV/
 *.dylib
 
 !J_e_f.casadi
+!update_theta_mapaccum.casadi
