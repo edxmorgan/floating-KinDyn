@@ -15,7 +15,7 @@ class URDFparser(object):
     """Class that turns a chain from URDF to casadi functions."""
     actuated_types = ["prismatic", "revolute", "continuous"]
     func_opts = {}
-    jit_func_opts = {"jit": True, "jit_options": {"flags": "-Ofast"}}
+    jit_func_opts = {"jit": True, "jit_options": {"flags": "-O3 -ffast-math",}}
     # OS/CPU dependent specification of compiler
     if system().lower() == "darwin" or machine().lower() == "aarch64":
         jit_func_opts["compiler"] = "shell"
@@ -613,16 +613,19 @@ class URDFparser(object):
         q = cs.SX.sym("q", n_joints)
         gravity = cs.SX.sym("g")
         g_vec = cs.vertcat(0,0,gravity)
+        
+        link_gravity = cs.SX.sym("link_g")
+        link_g_vec = cs.vertcat(0,0,link_gravity)
         payload_props  = cs.SX.sym("payload_props", 4) # mass, Ixx, Iyy, Izz
 
         tau_g = self._get_gravity_rnea(root, tip)      # G(q,g) → τ_g
-        G_tau = tau_g(q, g_vec)
+        G_tau = tau_g(q, link_g_vec)
 
         i_X_p, Si, Ic, tip_ofs  = self._model_calculation(root, tip, q)
         tau_pl = self._add_payload(n_joints, i_X_p, Si, tip_ofs, q, gravity, payload_props)
 
         tau_comp = G_tau + tau_pl                     # ≈ “motor holds the arm”
-        tau_comp_f = cs.Function("tau_comp", [q, gravity, payload_props],
+        tau_comp_f = cs.Function("tau_comp", [q, link_gravity, gravity, payload_props],
                              [tau_comp], self.func_opts)
         return tau_comp_f
 
@@ -642,7 +645,9 @@ class URDFparser(object):
         q_ddot = cs.SX.zeros(n_joints)
 
         gravity = cs.SX.sym("g")
+        link_gravity = cs.SX.sym("link_g")
         g_vec = cs.vertcat(0,0,gravity)
+        link_g_vec = cs.vertcat(0,0,link_gravity)
         payload_props  = cs.SX.sym("payload_props", 4) # mass, Ixx, Iyy, Izz
  
         k        = cs.SX.sym("k", n_joints, 2)          # sharpness of tanh: ↑k → closer to true sign()
@@ -666,13 +671,13 @@ class URDFparser(object):
         M = self._get_M(Ic, i_X_p, Si, n_joints, q)
         M_inv = cs.solve(M, cs.SX.eye(M.size1()))
 
-        C = self._get_C(i_X_p, Si, Ic, q, q_dot, n_joints, g_vec, f_ext)
+        C = self._get_C(i_X_p, Si, Ic, q, q_dot, n_joints, link_g_vec, f_ext)
         tau_pl = self._add_payload(n_joints, i_X_p, Si, tip_ofs, q, gravity, payload_props)
 
         
         q_ddot = cs.mtimes(M_inv, (tau - tau_fric - C - tau_pl))
         
-        q_ddot_f = cs.Function("q_ddot", [q, q_dot, tau, gravity, k, viscous, coulomb, I_Grotor, payload_props],
+        q_ddot_f = cs.Function("q_ddot", [q, q_dot, tau, link_gravity, gravity, k, viscous, coulomb, I_Grotor, payload_props],
                              [q_ddot], self.func_opts)
         
 
@@ -691,6 +696,7 @@ class URDFparser(object):
         tau_cmd = cs.MX.sym('tau_cmd', n_joints)   # *controller* torque
         dt    = cs.MX.sym('dt')                     # integration step (s)
         g     = cs.MX.sym('g')                      # gravity acceleration (e.g. -9.81)
+        link_g     = cs.MX.sym('link_g')                      # link gravity acceleration (e.g. -9.81)
 
         k        = cs.MX.sym('k_',        n_joints, 2)   # tanh sharpness coefficients
         viscous  = cs.MX.sym('viscous',   n_joints, 2)   # viscous friction
@@ -711,7 +717,7 @@ class URDFparser(object):
         # ------------------------------------------------------------------
         # 4. Holding torque (independent of tau_cmd)
         # ------------------------------------------------------------------
-        tau_hold = tau_hold_fun(q, g, payload_props)
+        tau_hold = tau_hold_fun(q, link_g, g, payload_props)
 
         # Decision: if |tau_cmd[i]| < ε  →  use tau_hold[i]
         use_hold   = cs.fabs(tau_cmd) < EPS_TORQUE
@@ -754,7 +760,7 @@ class URDFparser(object):
         # ------------------------------------------------------------------
         # 5. Forward dynamics with the *selected* torque
         # ------------------------------------------------------------------
-        q_ddot = q_ddot_fun(q, v_guard, tau_sat, g, k, viscous, coulomb, I_Grotor, payload_props)
+        q_ddot = q_ddot_fun(q, v_guard, tau_sat, link_g, g, k, viscous, coulomb, I_Grotor, payload_props)
             
         # ------------------------------------------------------------------
         # 7. State vector and ODE
@@ -770,6 +776,7 @@ class URDFparser(object):
         # ─────────────────────────────────────────────────────────────────────────────
         p = cs.vertcat(
                 dt,
+                link_g,
                 g,
                 cs.reshape(k,       -1, 1),
                 cs.reshape(viscous, -1, 1),
@@ -805,5 +812,5 @@ class URDFparser(object):
             cs.reshape(I_Grotor,  -1, 1)
                 )
 
-        F_next = cs.Function('Mnext', [x, tau_cmd, dt, g, payload_props, p_sim , lower_joint_limit, upper_joint_limit, EPS_TORQUE], [x_next], self.func_opts)
+        F_next = cs.Function('Mnext', [x, tau_cmd, dt, link_g, g, payload_props, p_sim , lower_joint_limit, upper_joint_limit, EPS_TORQUE], [x_next], self.func_opts)
         return F_next
