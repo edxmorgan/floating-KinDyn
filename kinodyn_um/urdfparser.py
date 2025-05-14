@@ -646,7 +646,6 @@ class URDFparser(object):
 
         gravity = cs.SX.sym("g")
         link_gravity = cs.SX.sym("link_g")
-        g_vec = cs.vertcat(0,0,gravity)
         link_g_vec = cs.vertcat(0,0,link_gravity)
         payload_props  = cs.SX.sym("payload_props", 4) # mass, Ixx, Iyy, Izz
  
@@ -654,9 +653,22 @@ class URDFparser(object):
         viscous  = cs.SX.sym("visc",   n_joints, 2)
         coulomb  = cs.SX.sym("coul",   n_joints, 2)
         I_Grotor = cs.SX.sym("Jm",     n_joints, 2)   # rotor inertias
+        EPS_TORQUE = cs.SX.sym('eps_torque', n_joints)
 
-        forward = cs.sign(tau) >= 0
+        
+        tau_hold_fun = self.get_active_complaince_tau(root, tip)  # gravity+payload
 
+        # ------------------------------------------------------------------
+        # 4. Holding torque (independent of tau_cmd)
+        # ------------------------------------------------------------------
+        tau_hold = tau_hold_fun(q, link_gravity, gravity, payload_props)
+
+        # Decision: if |tau[i]| < ε  →  use tau_hold[i]
+        use_hold   = cs.fabs(tau) < EPS_TORQUE
+        tau_eff    = cs.if_else(use_hold, tau_hold, tau)
+
+        forward = cs.sign(tau_eff) >= 0
+        
         # directional dependent parameters
         B_vec  = cs.if_else(forward, viscous[:, 0], viscous[:, 1])
         F_vec  = cs.if_else(forward, coulomb[:, 0],  coulomb[:, 1])
@@ -675,9 +687,9 @@ class URDFparser(object):
         tau_pl = self._add_payload(n_joints, i_X_p, Si, tip_ofs, q, gravity, payload_props)
 
         
-        q_ddot = cs.mtimes(M_inv, (tau - tau_fric - C - tau_pl))
+        q_ddot = cs.mtimes(M_inv, (tau_eff - tau_fric - C - tau_pl))
         
-        q_ddot_f = cs.Function("q_ddot", [q, q_dot, tau, link_gravity, gravity, k, viscous, coulomb, I_Grotor, payload_props],
+        q_ddot_f = cs.Function("q_ddot", [q, q_dot, tau, link_gravity, gravity, k, viscous, coulomb, I_Grotor, payload_props, EPS_TORQUE],
                              [q_ddot], self.func_opts)
         
 
@@ -712,16 +724,6 @@ class URDFparser(object):
         # 3. Forward dynamics (from CRBA model produced by urdf2casadi)
         # ─────────────────────────────────────────────────────────────────────────────
         q_ddot_fun = self.get_forward_dynamics_crba(root, tip) # acceleration
-        tau_hold_fun = self.get_active_complaince_tau(root, tip)  # gravity+payload
-
-        # ------------------------------------------------------------------
-        # 4. Holding torque (independent of tau_cmd)
-        # ------------------------------------------------------------------
-        tau_hold = tau_hold_fun(q, link_g, g, payload_props)
-
-        # Decision: if |tau_cmd[i]| < ε  →  use tau_hold[i]
-        use_hold   = cs.fabs(tau_cmd) < EPS_TORQUE
-        tau_eff    = cs.if_else(use_hold, tau_hold, tau_cmd)
 
         # ─────────────────────────────────────────────────────────────────────────────
         # 6. Joint‑limit saturation with recovery
@@ -741,18 +743,18 @@ class URDFparser(object):
             vel_out_low  = cs.logic_and(below, q_dot[i] < 0)
 
             # “Adds energy” if torque points the same way as the outward motion
-            adds_energy_high = cs.logic_and(vel_out_high, tau_eff[i] >  0)
-            adds_energy_low  = cs.logic_and(vel_out_low,  tau_eff[i] <  0)
+            adds_energy_high = cs.logic_and(vel_out_high, tau_cmd[i] >  0)
+            adds_energy_low  = cs.logic_and(vel_out_low,  tau_cmd[i] <  0)
 
             # Also block any *static* outward push (velocity zero but torque outward)
-            push_out_high = cs.logic_and(above, tau_eff[i] > 0)
-            push_out_low  = cs.logic_and(below, tau_eff[i] < 0)
+            push_out_high = cs.logic_and(above, tau_cmd[i] > 0)
+            push_out_low  = cs.logic_and(below, tau_cmd[i] < 0)
 
             violate = cs.logic_or(push_out_high, push_out_low)
             violate = cs.logic_or(violate,       adds_energy_high)
             violate = cs.logic_or(violate,       adds_energy_low)
 
-            tau_sat[i] = cs.if_else(violate, 0, tau_eff[i])
+            tau_sat[i] = cs.if_else(violate, 0, tau_cmd[i])
 
             v_guard[i] = cs.if_else(cs.logic_or(vel_out_high, vel_out_low), 0, q_dot[i])
 
@@ -760,7 +762,7 @@ class URDFparser(object):
         # ------------------------------------------------------------------
         # 5. Forward dynamics with the *selected* torque
         # ------------------------------------------------------------------
-        q_ddot = q_ddot_fun(q, v_guard, tau_sat, link_g, g, k, viscous, coulomb, I_Grotor, payload_props)
+        q_ddot = q_ddot_fun(q, v_guard, tau_sat, link_g, g, k, viscous, coulomb, I_Grotor, payload_props, EPS_TORQUE)
             
         # ------------------------------------------------------------------
         # 7. State vector and ODE
