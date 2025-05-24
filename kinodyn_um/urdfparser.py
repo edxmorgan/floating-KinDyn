@@ -656,16 +656,16 @@ class URDFparser(object):
         EPS_TORQUE = cs.SX.sym('eps_torque', n_joints)
 
         
-        tau_hold_fun = self.get_active_complaince_tau(root, tip)  # gravity+payload
+        tau_lock_fun = self.get_active_complaince_tau(root, tip)  # gravity+payload
 
         # ------------------------------------------------------------------
         # 4. Holding torque (independent of tau_cmd)
         # ------------------------------------------------------------------
-        tau_hold = tau_hold_fun(q, link_gravity, gravity, payload_props)
+        tau_lock = tau_lock_fun(q, link_gravity, gravity, payload_props)
 
         # Decision: if |tau[i]| < ε  →  use tau_hold[i]
         use_hold   = cs.fabs(tau) < EPS_TORQUE
-        tau_eff    = cs.if_else(use_hold, tau_hold, tau)
+        tau_eff    = cs.if_else(use_hold, tau_lock, tau)
 
         forward = cs.sign(tau_eff) >= 0
         
@@ -814,5 +814,5 @@ class URDFparser(object):
             cs.reshape(I_Grotor,  -1, 1)
                 )
 
-        F_next = cs.Function('Mnext', [x, tau_cmd, dt, link_g, g, payload_props, p_sim , lower_joint_limit, upper_joint_limit, EPS_TORQUE], [x_next], self.func_opts)
+        F_next = cs.Function('Mnext', [x, tau_cmd, dt, link_g, g, payload_props, p_sim , lower_joint_limit, upper_joint_limit, EPS_TORQUE], [x_next, tau_sat], self.func_opts)
         return F_next
