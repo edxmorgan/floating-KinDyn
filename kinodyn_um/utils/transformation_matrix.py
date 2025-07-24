@@ -121,7 +121,15 @@ def full_symbolic(xyz, rpy):
     T[3, 3] = 1.0
     return T
 
-
+def rpy_rate_to_omega_T(rpy):
+    """Return T(φ,θ) that maps Euler‑angle rates to angular velocity."""
+    φ, θ, _ = rpy[0], rpy[1], rpy[2]
+    return cs.vertcat(
+        cs.horzcat( 1,            0,           -cs.sin(θ)),
+        cs.horzcat( 0,  cs.cos(φ),  cs.cos(θ)*cs.sin(φ)),
+        cs.horzcat( 0, -cs.sin(φ),  cs.cos(θ)*cs.cos(φ)),
+    )
+    
 def numpy_normalize(v):
     nv = np.linalg.norm(v)
     if nv > 0.0:
@@ -149,7 +157,6 @@ def numpy_rotation_rpy(roll, pitch, yaw):
     return np.array([[cy*cp,  cy*sp*sr - sy*cr,  cy*sp*cr + sy*sr],
                      [sy*cp,  sy*sp*sr + cy*cr,  sy*sp*cr - cy*sr],
                      [  -sp,             cp*sr,             cp*cr]])
-
 
 def numpy_rpy(displacement, roll, pitch, yaw):
     """Homogeneous transformation matrix with roll pitch yaw."""

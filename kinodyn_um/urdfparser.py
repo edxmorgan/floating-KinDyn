@@ -5,11 +5,9 @@ import casadi as cs
 import numpy as np
 from platform import machine, system
 from urdf_parser_py.urdf import URDF, Pose
-import kinodyn_um.utils.transformation_matrix as T
+import kinodyn_um.utils.transformation_matrix as Transformation
 import kinodyn_um.utils.plucker as plucker
-import kinodyn_um.utils.quaternion as quaternion
-import kinodyn_um.utils.dual_quaternion as dual_quaternion
-
+import kinodyn_um.utils.quaternion as quatT
 
 class URDFparser(object):
     """Class that turns a chain from URDF to casadi functions."""
@@ -93,30 +91,14 @@ class URDFparser(object):
         num_samples: how many random samples to draw in joint space.
         """
         n_joints = self.get_n_joints(root, tip)
-        baseT_xyz = cs.SX.sym('T_xyz', 3) # manipulator-vehicle mount link xyz origin 
-        baseT_rpy = cs.SX.sym('T_rpy', 3) # manipulator-vehicle mount link rpy origin
+        
+        _, Fks, _, _,_, args = self._kinematics(root, tip, floating_base=floating_base)
+        
+        q, tr_n, eul, baseT_xyz, baseT_rpy = args
         base_T_sym = cs.vertcat(baseT_rpy, baseT_xyz) # transform from origin to 1st child
-
-        q = cs.SX.sym("q", n_joints)
-        x = cs.SX.sym('x')
-        y = cs.SX.sym('y')
-        z = cs.SX.sym('z')
-        tr_n = cs.vertcat(x, y, z) # x, y ,z of uv wrt to ned origin
-        thet = cs.SX.sym('thet')
-        phi = cs.SX.sym('phi')
-        psi = cs.SX.sym('psi')
-        eul = cs.vertcat(phi, thet, psi)  # NED euler angular velocity
-        p_n = cs.vertcat(tr_n, eul) # ned total states
-        ned_pose_sym = cs.vertcat(p_n, q) #NED position
-
-        i_X_0fs = self._kinematics(root, tip, floating_base = floating_base)
-        if floating_base:
-            i_X_0s = i_X_0fs(q, tr_n, eul, baseT_xyz, baseT_rpy)
-        else:
-            i_X_0s = i_X_0fs(q)
-        H4 , R4, p4 = plucker.spatial_to_homogeneous(i_X_0s[-1])
-        T4_euler = cs.vertcat(p4, plucker.rotation_matrix_to_euler(R4, order='xyz'))
-        internal_fk_eval_euler = cs.Function("internal_fkeval_euler", [ned_pose_sym, base_T_sym], [T4_euler])
+        p_n = cs.vertcat(tr_n, eul) 
+        pose_sym = cs.vertcat(p_n, q)
+        internal_fk_eval_euler = cs.Function("internal_fkeval_euler", [pose_sym, base_T_sym], [Fks[-1]])
         
         # Arrays to track min/max
         min_pos = np.array([np.inf, np.inf, np.inf])
@@ -135,10 +117,9 @@ class URDFparser(object):
 
             # Forward kinematics: end-effector position
             config = cs.vertcat([0,0,0,0,0,0], thetas)
-            # config= cs.vertcat([0, 0, 0, 0, 0, 0, 1.07164, 2.05017, 1.065, 0.926672])
-            # print(f'configuration sent: {config}')
+
             pose = internal_fk_eval_euler(config, base_T)
-            # print(f'pose rececievetn: {pose}')
+
             x = pose[0]
             y = pose[1]
             z = pose[2]
@@ -176,6 +157,8 @@ class URDFparser(object):
         phi = cs.SX.sym('phi')
         psi = cs.SX.sym('psi')
         eul = cs.vertcat(phi, thet, psi)  # NED euler angular velocity
+        p_n = cs.vertcat(tr_n, eul) # ned total states
+        coordinates = cs.vertcat(p_n, q) # state coordinates
 
         i_X_p, Si, Ic , tip_ofs = self._model_calculation(root, tip, q)
         T_Base = plucker.XT(baseT_xyz, baseT_rpy)
@@ -196,13 +179,55 @@ class URDFparser(object):
 
         end_i_X_0 = plucker.spatial_mtimes(tip_ofs , i_X_0)
         i_X_0s.append(end_i_X_0)
+        
+        Fks, qFks, geo_J, anlyt_J = self.compute_Fk_and_jacobians(coordinates, i_X_0s)
+        
+        args = [q, tr_n, eul, baseT_xyz, baseT_rpy]
 
-        if floating_base:
-            i_X_0sf_ = cs.Function("i_X_0sf", [q, tr_n, eul, baseT_xyz, baseT_rpy], i_X_0s)
-        else:
-            i_X_0sf_ = cs.Function("i_X_0sf", [q], i_X_0s)
+        return i_X_0s, Fks, qFks, geo_J, anlyt_J, args
+    
+    
+    def compute_Fk_and_jacobians(self, coordinates, i_X_0s):
+        Fks = []  # collect forward kinematics in euler form
+        qFks = []  # collect forward kinematics in quaternion form
+        geo_J = []          # collect geometric J’s
+        anlyt_J = []          # collect analytic J’s
+        npoints = len(i_X_0s)
+        for i in range(npoints):
+            H, R, p = plucker.spatial_to_homogeneous(i_X_0s[i])
+        
+            # pose vector [p; φ θ ψ] using xyz Euler
+            rpy        = plucker.rotation_matrix_to_euler(R, order='xyz')
+            T_euler    = cs.vertcat(p, rpy)
+            Fks.append(T_euler)  # forward kinematics
+            
+            qwxyz = quatT.rotation_matrix_to_quaternion(R, order='wxyz')
+            T_quat = cs.vertcat(p, qwxyz)  # pose vector [p; qx qy qz qw]
+            qFks.append(T_quat)  # forward kinematics
+            
+            # 6×n analytic Jacobian
+            Ja         = cs.jacobian(T_euler, cs.vertcat(coordinates))
+            anlyt_J.append(Ja)
+            
+            # 6×n geometric Jacobian
+            Jg         = self.analytic_to_geometric(Ja, rpy)
+            geo_J.append(Jg)
+        return Fks, qFks, geo_J, anlyt_J
+            
 
-        return i_X_0sf_
+    def analytic_to_geometric(self,Ja, rpy):
+        """
+        Convert a 6×n analytic Jacobian (XYZ Euler) to geometric.
+        Ja  – analytic Jacobian  (6×n SX/DM)
+        rpy – current Euler angles (3‑vector SX/DM)
+        """
+        T = Transformation.rpy_rate_to_omega_T(rpy)     # 3×3
+        # split linear / angular blocks
+        Jv = Ja[0:3, :]                  # linear rows stay the same
+        Jθ = Ja[3:6, :]                  # Euler‑rate rows → map
+        Jω = T @ Jθ                      # angular velocity rows
+        return cs.vertcat(Jv, Jω)        # 6×n geometric Jacobian
+
 
     def _model_calculation(self, root, tip, q):
         """Calculates and returns model information needed in the
