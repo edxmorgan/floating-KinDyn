@@ -375,7 +375,7 @@ class RobotDynamics(object):
         n_joints = self.get_n_joints(root, tip)
         i_X_0s, R_symx, Fks, qFks, geo_J, body_J, anlyt_J, args = self._kinematics(root, tip, floating_base=floating_base)
         m, I_b_mat, I_params, q, q_dot, tr_n, eul, baseT_xyz, baseT_rpy = args
-        D = 0  # D(q) is a symmetric positive definite matrix that is in general configuration dependent. The matrix  is called the inertia matrix.
+        D = cs.SX.zeros((n_joints, n_joints))  # D(q) is a symmetric positive definite matrix that is in general configuration dependent. The matrix  is called the inertia matrix.
         for i in range(n_joints):
             Jv_i = geo_J[i][0:3, :]
             Jω_i = geo_J[i][3:6, :]
