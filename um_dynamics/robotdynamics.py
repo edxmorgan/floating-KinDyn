@@ -160,7 +160,7 @@ class RobotDynamics(object):
         p_n = cs.vertcat(tr_n, eul) # ned total states
         coordinates = cs.vertcat(p_n, q) # state coordinates
 
-        i_X_p, Si, Ic , tip_ofs = self._model_calculation(root, tip, q)
+        i_X_p, Si, Ic , tip_offsets = self._model_calculation(root, tip, q)
         T_Base = plucker.XT(baseT_xyz, baseT_rpy)
 
         i_X_0s = []
@@ -177,7 +177,7 @@ class RobotDynamics(object):
             
             i_X_0s.append(i_X_0)  # transformation of joint i wrt origin 0
 
-        end_i_X_0 = plucker.spatial_mtimes(tip_ofs , i_X_0)
+        end_i_X_0 = plucker.spatial_mtimes(tip_offsets , i_X_0)
         i_X_0s.append(end_i_X_0)
         
         R_symx, Fks, qFks, geo_J, body_J, anlyt_J = self.compute_Fk_and_jacobians(coordinates, i_X_0s)
