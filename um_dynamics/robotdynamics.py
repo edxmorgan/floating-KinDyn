@@ -414,8 +414,8 @@ class RobotDynamics(object):
         raise NotImplementedError("Inertia matrix calculation not implemented.")
 
     def coriolis_centrifugal_matrix(self, root, tip):
-        """Returns the Coriolis and centrifugal forces of the system."""
-        raise NotImplementedError("Coriolis and centrifugal forces calculation not implemented.")
+        """Returns the Coriolis and centrifugal matrix of the system."""
+        raise NotImplementedError("Coriolis and centrifugal matrix calculation not implemented.")
 
     def gravity_vector(self, root, tip):
         """Returns the gravity vector of the system."""
