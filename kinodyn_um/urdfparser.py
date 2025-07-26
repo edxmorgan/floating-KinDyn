@@ -246,7 +246,6 @@ class URDFparser(object):
 
         chain = self.robot_desc.get_chain(root, tip)
         spatial_inertias = []
-        i_X_0 = []
         i_X_p = []
         Sis = []
         tip_offset = cs.DM_eye(6)
@@ -254,10 +253,6 @@ class URDFparser(object):
         n_actuated = 0
         i = 0
 
-       
-        # coeffs = cs.vertcat(*(S.T @ cs.fabs(S) for S in Si))      # n×1 SX
-        # q_on_axis = cs.diag(q) @ coeffs
-        
         for item in chain:
             if item in self.robot_desc.joint_map:
                 joint = self.robot_desc.joint_map[item]
@@ -348,3 +343,20 @@ class URDFparser(object):
                     spatial_inertias.append(spatial_inertia)
 
         return i_X_p, Sis, spatial_inertias, tip_offset
+    
+    def kinetic_enegy(self):
+        """Returns the kinetic energy of the system."""
+        raise NotImplementedError("Kinetic energy calculation not implemented.")
+    
+    def potential_energy(self):
+        """Returns the potential energy of the system."""
+        raise NotImplementedError("Potential energy calculation not implemented.")
+    
+    def lagrangian(self):
+        """Returns the Lagrangian of the system."""
+        raise NotImplementedError("Lagrangian calculation not implemented.")
+    
+    def eom(self, root, tip):
+        """Returns the equations of motion for the system."""
+        raise NotImplementedError("Equations of motion calculation not implemented.")
+    
