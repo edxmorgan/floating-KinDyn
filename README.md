@@ -1,4 +1,4 @@
-# Kinodynamic-Underwater-Manipulator 🦾🌊 
+# Underwater-Manipulator 🦾🌊 
 A library for generating the kinematics and dynamics of electric underwater robotic arm.
 <!-- ![alt text]() -->
 <img src="./resources/uvman.jpg" width="420"/>
