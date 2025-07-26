@@ -12,7 +12,9 @@ For usage examples of Diff_UVMS, see [Jupyter notebook](https://github.com/edxmo
 
 
 ## References
-Roy Featherstone and Kluwer Academic Publishers. 1987. Robot Dynamics Algorithm. Kluwer Academic Publishers, USA. http://dx.doi.org/10.1007/978-1-4899-7560-7
+Roy Featherstone and Kluwer Academic Publishers. 1987. Robot Dynamics Algorithm. Kluwer Academic Publishers, USA.
+M. W. Spong, S. Hutchinson and M. Vidyasagar, “Robot Modeling and Control,” Wiley, New York, 2006.
+
 
 ## Caution ⚠️  
 This project is still experimental. While the core functionalities have been implemented and tested to some extent, further validation and testing are required. Use with care, especially for safety-critical applications. Contributions and feedback are welcome!  
