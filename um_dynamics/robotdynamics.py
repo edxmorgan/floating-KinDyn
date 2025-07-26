@@ -9,7 +9,7 @@ import um_dynamics.utils.transformation_matrix as Transformation
 import um_dynamics.utils.plucker as plucker
 import um_dynamics.utils.quaternion as quatT
 
-class URDFparser(object):
+class RobotDynamics(object):
     """Class that turns a chain from URDF to casadi functions."""
     actuated_types = ["prismatic", "revolute", "continuous"]
     func_opts = {}
