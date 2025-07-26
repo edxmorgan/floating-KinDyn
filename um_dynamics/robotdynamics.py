@@ -94,7 +94,7 @@ class RobotDynamics(object):
         
         i_X_0s, R_symx, Fks, qFks, geo_J, body_J, anlyt_J, args = self._kinematics(root, tip, floating_base=floating_base)
         
-        q, tr_n, eul, baseT_xyz, baseT_rpy = args
+        m, I_b, q, q_dot, tr_n, eul, baseT_xyz, baseT_rpy = args
         base_T_sym = cs.vertcat(baseT_rpy, baseT_xyz) # transform from origin to 1st child
         p_n = cs.vertcat(tr_n, eul) 
         pose_sym = cs.vertcat(p_n, q)
@@ -144,7 +144,6 @@ class RobotDynamics(object):
             raise ValueError('Robot description not loaded from urdf')
 
         n_joints = self.get_n_joints(root, tip)
-        q = cs.SX.sym("q", n_joints)
         
         baseT_xyz = cs.SX.sym('T_xyz', 3) # manipulator-vehicle mount link xyz origin 
         baseT_rpy = cs.SX.sym('T_rpy', 3) # manipulator-vehicle mount link rpy origin
@@ -156,10 +155,9 @@ class RobotDynamics(object):
         thet = cs.SX.sym('thet')
         phi = cs.SX.sym('phi')
         psi = cs.SX.sym('psi')
-        eul = cs.vertcat(phi, thet, psi)  # NED euler angular velocity
-        p_n = cs.vertcat(tr_n, eul) # ned total states
+        eul = cs.vertcat(phi, thet, psi)  # base parameterizedorientation
 
-        i_X_p, Si, Ic , tip_offsets = self._model_calculation(root, tip, q)
+        i_X_p, Si, Ic , tip_offsets, m, I_b, q, q_dot = self._model_calculation(root, tip)
         T_Base = plucker.XT(baseT_xyz, baseT_rpy)
 
         i_X_0s = []
@@ -181,7 +179,7 @@ class RobotDynamics(object):
         
         R_symx, Fks, qFks, geo_J, body_J, anlyt_J = self.compute_Fk_and_jacobians(q, i_X_0s)
         
-        args = [q, tr_n, eul, baseT_xyz, baseT_rpy]
+        args = [m, I_b, q, q_dot, tr_n, eul, baseT_xyz, baseT_rpy]
 
         return i_X_0s, R_symx, Fks, qFks, geo_J, body_J, anlyt_J, args
     
@@ -193,8 +191,7 @@ class RobotDynamics(object):
         body_J = []         # collect body J’s
         anlyt_J = []          # collect analytic J’s
         R_symx = []
-        npoints = len(i_X_0s)
-        for i in range(npoints):
+        for i in range(len(i_X_0s)):
             H, R, p = plucker.spatial_to_homogeneous(i_X_0s[i])
             R_symx.append(R)  # collect rotation matrices
         
@@ -236,13 +233,13 @@ class RobotDynamics(object):
         return cs.vertcat(Jv, Jω)        # 6×n geometric Jacobian
 
 
-    def _model_calculation(self, root, tip, q):
+    def _model_calculation(self, root, tip):
         """Calculates and returns model information needed in the
         dynamics algorithms caluculations, i.e transforms, joint space
         and inertia."""
         if self.robot_desc is None:
             raise ValueError('Robot description not loaded from urdf')
-
+        n_joints = self.get_n_joints(root, tip)
         chain = self.robot_desc.get_chain(root, tip)
         spatial_inertias = []
         i_X_p = []
@@ -251,6 +248,11 @@ class RobotDynamics(object):
         prev_joint = None
         n_actuated = 0
         i = 0
+        
+        m = cs.SX.sym("m", n_joints)
+        I_b = cs.SX.sym("I_b", 3, 3, n_joints)
+        q = cs.SX.sym("q", n_joints)
+        q_dot = cs.SX.sym("q_dot", n_joints)
 
         for item in chain:
             if item in self.robot_desc.joint_map:
@@ -341,29 +343,37 @@ class RobotDynamics(object):
                 if link.name == tip:
                     spatial_inertias.append(spatial_inertia)
 
-        return i_X_p, Sis, spatial_inertias, tip_offset
+        return i_X_p, Sis, spatial_inertias, tip_offset, m, I_b, q, q_dot
         
     def kinetic_enegy(self, root, tip, floating_base=False):
         """Returns the kinetic energy of the system."""
         n_joints = self.get_n_joints(root, tip)
-        m = cs.SX.sym("m", n_joints)
-        I = cs.SX.sym("I", 3, 3, n_joints)
         i_X_0s, R_symx, Fks, qFks, geo_J, body_J, anlyt_J, args = self._kinematics(root, tip, floating_base=floating_base)
-        q, tr_n, eul, baseT_xyz, baseT_rpy = args
-        q_dot = cs.SX.sym("q_dot", n_joints)
+        m, I_b, q, q_dot, tr_n, eul, baseT_xyz, baseT_rpy = args
         D = 0
         for i in range(n_joints):
             Jv_i = geo_J[i][0:3, :]
             Jω_i = geo_J[i][3:6, :]
             R_i = R_symx[i]
-            I_i = I[i][:, :]
+            Ib_i = I_b[i][:, :]
             m_i = m[i]
-            D += m_i @ (Jv_i.T @ Jv_i) + Jω_i.T @ R_i @ I_i @ R_i.T @ Jω_i
+            D += m_i @ (Jv_i.T @ Jv_i) + Jω_i.T @ R_i @ Ib_i @ R_i.T @ Jω_i
         K = 0.5 * q_dot.T @ D @ q_dot
         return K
 
-    def potential_energy(self):
+    def potential_energy(self, root, tip, floating_base=False):
         """Returns the potential energy of the system."""
+        # n_joints = self.get_n_joints(root, tip)
+        # i_X_0s, R_symx, Fks, qFks, geo_J, body_J, anlyt_J, args = self._kinematics(root, tip, floating_base=floating_base)
+        # m, I_b, q, q_dot, tr_n, eul, baseT_xyz, baseT_rpy = args
+        # g = cs.SX.sym("g", 3)  # gravity vector
+        # P = 0
+        # for i in range(n_joints):
+        #     R_i = R_symx[i]
+        #     p_i = Fks[i][0:3]
+        #     m_i = m[i]
+        #     P += m_i * g.T @ R_i.T @ p_i
+        # return P
         raise NotImplementedError("Potential energy calculation not implemented.")
     
     def lagrangian(self):
