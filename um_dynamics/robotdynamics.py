@@ -261,7 +261,7 @@ class RobotDynamics(object):
 
     def _model_calculation(self, root, tip):
         """Calculates and returns model information needed in the
-        dynamics algorithms caluculations, i.e transforms, joint space
+        dynamics algorithms calculations, i.e transforms, joint space
         and inertia."""
         if self.robot_desc is None:
             raise ValueError('Robot description not loaded from urdf')
