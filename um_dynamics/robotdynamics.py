@@ -94,7 +94,7 @@ class RobotDynamics(object):
         
         i_X_0s, R_symx, Fks, qFks, geo_J, body_J, anlyt_J, args = self._kinematics(root, tip, floating_base=floating_base)
         
-        m, I_b, q, q_dot, tr_n, eul, baseT_xyz, baseT_rpy = args
+        m, I_b_mat, I_params, q, q_dot, tr_n, eul, baseT_xyz, baseT_rpy = args
         base_T_sym = cs.vertcat(baseT_rpy, baseT_xyz) # transform from origin to 1st child
         p_n = cs.vertcat(tr_n, eul) 
         pose_sym = cs.vertcat(p_n, q)
@@ -157,7 +157,7 @@ class RobotDynamics(object):
         psi = cs.SX.sym('psi')
         eul = cs.vertcat(phi, thet, psi)  # base parameterizedorientation
 
-        i_X_p, Si, Ic , tip_offsets, m, I_b, q, q_dot = self._model_calculation(root, tip)
+        i_X_p, Si, Ic , tip_offsets, m, I_b_mat, I_params, q, q_dot = self._model_calculation(root, tip)
         T_Base = plucker.XT(baseT_xyz, baseT_rpy)
 
         i_X_0s = []
@@ -179,7 +179,7 @@ class RobotDynamics(object):
         
         R_symx, Fks, qFks, geo_J, body_J, anlyt_J = self.compute_Fk_and_jacobians(q, i_X_0s)
         
-        args = [m, I_b, q, q_dot, tr_n, eul, baseT_xyz, baseT_rpy]
+        args = [m, I_b_mat,I_params, q, q_dot, tr_n, eul, baseT_xyz, baseT_rpy]
 
         return i_X_0s, R_symx, Fks, qFks, geo_J, body_J, anlyt_J, args
     
@@ -232,6 +232,32 @@ class RobotDynamics(object):
         Jω = T @ Jθ                      # angular velocity rows
         return cs.vertcat(Jv, Jω)        # 6×n geometric Jacobian
 
+    def build_inertia(self, name: str, n_links: int):
+        """
+        Return a list of 3×3 SX inertia tensors, one per link, with only
+        the six independent parameters (Ixx, Iyy, Izz, Ixy, Ixz, Iyz).
+        """
+        m_params = []
+        I_tensors = []
+        I_params = []
+        for k in range(n_links):
+            m = cs.SX.sym(f"m_{k}")
+            Ixx = cs.SX.sym(f"Ixx_{k}")
+            Iyy = cs.SX.sym(f"Iyy_{k}")
+            Izz = cs.SX.sym(f"Izz_{k}")
+            Ixy = cs.SX.sym(f"Ixy_{k}")
+            Ixz = cs.SX.sym(f"Ixz_{k}")
+            Iyz = cs.SX.sym(f"Iyz_{k}")
+
+            I_k = cs.vertcat(
+                cs.hcat([Ixx, Ixy, Ixz]),
+                cs.hcat([Ixy, Iyy, Iyz]),
+                cs.hcat([Ixz, Iyz, Izz])
+            )
+            m_params.append(m)
+            I_tensors.append(I_k)
+            I_params.extend([Ixx, Iyy, Izz, Ixy, Ixz, Iyz])
+        return m_params, I_tensors, I_params
 
     def _model_calculation(self, root, tip):
         """Calculates and returns model information needed in the
@@ -249,8 +275,7 @@ class RobotDynamics(object):
         n_actuated = 0
         i = 0
         
-        m = cs.SX.sym("m", n_joints)
-        I_b = cs.SX.sym("I_b", 3, 3, n_joints)
+        m, I_b_mat, I_params = self.build_inertia("I_b_mat", n_joints)   # I_b_mat[k] is 3×3 symmetric SX
         q = cs.SX.sym("q", n_joints)
         q_dot = cs.SX.sym("q_dot", n_joints)
 
@@ -343,29 +368,29 @@ class RobotDynamics(object):
                 if link.name == tip:
                     spatial_inertias.append(spatial_inertia)
 
-        return i_X_p, Sis, spatial_inertias, tip_offset, m, I_b, q, q_dot
+        return i_X_p, Sis, spatial_inertias, tip_offset, m, I_b_mat, I_params, q, q_dot
         
     def kinetic_enegy(self, root, tip, floating_base=False):
         """Returns the kinetic energy of the system."""
         n_joints = self.get_n_joints(root, tip)
         i_X_0s, R_symx, Fks, qFks, geo_J, body_J, anlyt_J, args = self._kinematics(root, tip, floating_base=floating_base)
-        m, I_b, q, q_dot, tr_n, eul, baseT_xyz, baseT_rpy = args
-        D = 0
+        m, I_b_mat, I_params, q, q_dot, tr_n, eul, baseT_xyz, baseT_rpy = args
+        D = 0  # D(q) is a symmetric positive definite matrix that is in general configuration dependent. The matrix  is called the inertia matrix.
         for i in range(n_joints):
             Jv_i = geo_J[i][0:3, :]
             Jω_i = geo_J[i][3:6, :]
             R_i = R_symx[i]
-            Ib_i = I_b[i][:, :]
+            Ib_mat_i = I_b_mat[i][:, :]
             m_i = m[i]
-            D += m_i @ (Jv_i.T @ Jv_i) + Jω_i.T @ R_i @ Ib_i @ R_i.T @ Jω_i
+            D += m_i @ (Jv_i.T @ Jv_i) + Jω_i.T @ R_i @ Ib_mat_i @ R_i.T @ Jω_i
         K = 0.5 * q_dot.T @ D @ q_dot
-        return K
+        return K , D, args
 
     def potential_energy(self, root, tip, floating_base=False):
         """Returns the potential energy of the system."""
         # n_joints = self.get_n_joints(root, tip)
         # i_X_0s, R_symx, Fks, qFks, geo_J, body_J, anlyt_J, args = self._kinematics(root, tip, floating_base=floating_base)
-        # m, I_b, q, q_dot, tr_n, eul, baseT_xyz, baseT_rpy = args
+        # m, I_b_mat, I_params, q, q_dot, tr_n, eul, baseT_xyz, baseT_rpy = args
         # g = cs.SX.sym("g", 3)  # gravity vector
         # P = 0
         # for i in range(n_joints):
