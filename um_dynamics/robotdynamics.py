@@ -401,11 +401,22 @@ class RobotDynamics(object):
         # return P
         raise NotImplementedError("Potential energy calculation not implemented.")
     
-    def lagrangian(self):
+    def lagrangian(self, root, tip):
         """Returns the Lagrangian of the system."""
         raise NotImplementedError("Lagrangian calculation not implemented.")
     
     def eom(self, root, tip):
         """Returns the equations of motion for the system."""
         raise NotImplementedError("Equations of motion calculation not implemented.")
-    
+
+    def inertia_matrix(self, root, tip):
+        """Returns the inertia matrix of the system."""
+        raise NotImplementedError("Inertia matrix calculation not implemented.")
+
+    def coriolis_centrifugal_matrix(self, root, tip):
+        """Returns the Coriolis and centrifugal forces of the system."""
+        raise NotImplementedError("Coriolis and centrifugal forces calculation not implemented.")
+
+    def gravity_vector(self, root, tip):
+        """Returns the gravity vector of the system."""
+        raise NotImplementedError("Gravity vector calculation not implemented.")
