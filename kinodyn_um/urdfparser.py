@@ -92,7 +92,7 @@ class URDFparser(object):
         """
         n_joints = self.get_n_joints(root, tip)
         
-        _, Fks, _, _,_, args = self._kinematics(root, tip, floating_base=floating_base)
+        i_X_0s, R_symx, Fks, qFks, geo_J, body_J, anlyt_J, args = self._kinematics(root, tip, floating_base=floating_base)
         
         q, tr_n, eul, baseT_xyz, baseT_rpy = args
         base_T_sym = cs.vertcat(baseT_rpy, baseT_xyz) # transform from origin to 1st child
@@ -180,21 +180,24 @@ class URDFparser(object):
         end_i_X_0 = plucker.spatial_mtimes(tip_ofs , i_X_0)
         i_X_0s.append(end_i_X_0)
         
-        Fks, qFks, geo_J, anlyt_J = self.compute_Fk_and_jacobians(coordinates, i_X_0s)
+        R_symx, Fks, qFks, geo_J, body_J, anlyt_J = self.compute_Fk_and_jacobians(coordinates, i_X_0s)
         
         args = [q, tr_n, eul, baseT_xyz, baseT_rpy]
 
-        return i_X_0s, Fks, qFks, geo_J, anlyt_J, args
+        return i_X_0s, R_symx, Fks, qFks, geo_J, body_J, anlyt_J, args
     
     
     def compute_Fk_and_jacobians(self, coordinates, i_X_0s):
         Fks = []  # collect forward kinematics in euler form
         qFks = []  # collect forward kinematics in quaternion form
         geo_J = []          # collect geometric J’s
+        body_J = []         # collect body J’s
         anlyt_J = []          # collect analytic J’s
+        R_symx = []
         npoints = len(i_X_0s)
         for i in range(npoints):
             H, R, p = plucker.spatial_to_homogeneous(i_X_0s[i])
+            R_symx.append(R)  # collect rotation matrices
         
             # pose vector [p; φ θ ψ] using xyz Euler
             rpy        = plucker.rotation_matrix_to_euler(R, order='xyz')
@@ -209,19 +212,24 @@ class URDFparser(object):
             Ja         = cs.jacobian(T_euler, cs.vertcat(coordinates))
             anlyt_J.append(Ja)
             
-            # 6×n geometric Jacobian
-            Jg         = self.analytic_to_geometric(Ja, rpy)
-            geo_J.append(Jg)
-        return Fks, qFks, geo_J, anlyt_J
-            
+            phi, theta, psi = rpy[0], rpy[1], rpy[2]
 
-    def analytic_to_geometric(self,Ja, rpy):
+            Ts = Transformation.euler_xyz_rate_to_spatial_T(phi, theta, psi)
+            Tb = Transformation.euler_xyz_rate_to_body_T(phi, theta, psi)
+            
+            # 6×n geometric Jacobian
+            Jg         = self.analytic_to_geometric(Ja, Ts)
+            Jb         = self.analytic_to_geometric(Ja, Tb)
+            geo_J.append(Jg)
+            body_J.append(Jb)
+        return R_symx, Fks, qFks, geo_J, body_J, anlyt_J
+
+
+    def analytic_to_geometric(self,Ja, T):
         """
         Convert a 6×n analytic Jacobian (XYZ Euler) to geometric.
         Ja  – analytic Jacobian  (6×n SX/DM)
-        rpy – current Euler angles (3‑vector SX/DM)
         """
-        T = Transformation.rpy_rate_to_omega_T(rpy)     # 3×3
         # split linear / angular blocks
         Jv = Ja[0:3, :]                  # linear rows stay the same
         Jθ = Ja[3:6, :]                  # Euler‑rate rows → map

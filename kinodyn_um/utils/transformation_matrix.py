@@ -2,7 +2,7 @@
 joint type."""
 import casadi as cs
 import numpy as np
-
+import kinodyn_um.utils.plucker as plucker
 
 def prismatic(xyz, rpy, axis, qi):
     T = cs.SX.zeros(4, 4)
@@ -121,15 +121,31 @@ def full_symbolic(xyz, rpy):
     T[3, 3] = 1.0
     return T
 
-def rpy_rate_to_omega_T(rpy):
-    """Return T(φ,θ) that maps Euler‑angle rates to angular velocity."""
-    φ, θ, _ = rpy[0], rpy[1], rpy[2]
+def euler_xyz_rate_to_spatial_T(phi, theta, psi):
+    sφ, cφ = cs.sin(phi),  cs.cos(phi)
+    sθ, cθ = cs.sin(theta), cs.cos(theta)
+
+    row1 = cs.horzcat(1, 0, sθ)
+    row2 = cs.horzcat(0, cφ, -sφ*cθ)
+    row3 = cs.horzcat(0, sφ,  cφ*cθ)
+    return cs.vertcat(row1, row2, row3)
+
+def euler_xyz_rate_to_body_T(phi, theta, psi):
+    sψ, cψ = cs.sin(psi),   cs.cos(psi)
+    sθ, cθ = cs.sin(theta), cs.cos(theta)
+
+    row1 = cs.horzcat( cθ*cψ,  sψ,  0 )
+    row2 = cs.horzcat(-cθ*sψ,  cψ,  0 )
+    row3 = cs.horzcat(     sθ,   0,   1 )
+    return cs.vertcat(row1, row2, row3)
+
+def vee(omega_hat):
     return cs.vertcat(
-        cs.horzcat( 1,            0,           -cs.sin(θ)),
-        cs.horzcat( 0,  cs.cos(φ),  cs.cos(θ)*cs.sin(φ)),
-        cs.horzcat( 0, -cs.sin(φ),  cs.cos(θ)*cs.cos(φ)),
+        omega_hat[2, 1],
+        omega_hat[0, 2],
+        omega_hat[1, 0]
     )
-    
+
 def numpy_normalize(v):
     nv = np.linalg.norm(v)
     if nv > 0.0:
