@@ -158,7 +158,6 @@ class RobotDynamics(object):
         psi = cs.SX.sym('psi')
         eul = cs.vertcat(phi, thet, psi)  # NED euler angular velocity
         p_n = cs.vertcat(tr_n, eul) # ned total states
-        coordinates = cs.vertcat(p_n, q) # state coordinates
 
         i_X_p, Si, Ic , tip_offsets = self._model_calculation(root, tip, q)
         T_Base = plucker.XT(baseT_xyz, baseT_rpy)
@@ -180,14 +179,14 @@ class RobotDynamics(object):
         end_i_X_0 = plucker.spatial_mtimes(tip_offsets , i_X_0)
         i_X_0s.append(end_i_X_0)
         
-        R_symx, Fks, qFks, geo_J, body_J, anlyt_J = self.compute_Fk_and_jacobians(coordinates, i_X_0s)
+        R_symx, Fks, qFks, geo_J, body_J, anlyt_J = self.compute_Fk_and_jacobians(q, i_X_0s)
         
         args = [q, tr_n, eul, baseT_xyz, baseT_rpy]
 
         return i_X_0s, R_symx, Fks, qFks, geo_J, body_J, anlyt_J, args
     
     
-    def compute_Fk_and_jacobians(self, coordinates, i_X_0s):
+    def compute_Fk_and_jacobians(self, q, i_X_0s):
         Fks = []  # collect forward kinematics in euler form
         qFks = []  # collect forward kinematics in quaternion form
         geo_J = []          # collect geometric J’s
@@ -209,7 +208,7 @@ class RobotDynamics(object):
             qFks.append(T_quat)  # forward kinematics
             
             # 6×n analytic Jacobian
-            Ja         = cs.jacobian(T_euler, cs.vertcat(coordinates))
+            Ja         = cs.jacobian(T_euler, q)
             anlyt_J.append(Ja)
             
             phi, theta, psi = rpy[0], rpy[1], rpy[2]
@@ -343,11 +342,26 @@ class RobotDynamics(object):
                     spatial_inertias.append(spatial_inertia)
 
         return i_X_p, Sis, spatial_inertias, tip_offset
-    
-    def kinetic_enegy(self):
+        
+    def kinetic_enegy(self, root, tip, floating_base=False):
         """Returns the kinetic energy of the system."""
-        raise NotImplementedError("Kinetic energy calculation not implemented.")
-    
+        n_joints = self.get_n_joints(root, tip)
+        m = cs.SX.sym("m", n_joints)
+        I = cs.SX.sym("I", 3, 3, n_joints)
+        i_X_0s, R_symx, Fks, qFks, geo_J, body_J, anlyt_J, args = self._kinematics(root, tip, floating_base=floating_base)
+        q, tr_n, eul, baseT_xyz, baseT_rpy = args
+        q_dot = cs.SX.sym("q_dot", n_joints)
+        D = 0
+        for i in range(n_joints):
+            Jv_i = geo_J[i][0:3, :]
+            Jω_i = geo_J[i][3:6, :]
+            R_i = R_symx[i]
+            I_i = I[i][:, :]
+            m_i = m[i]
+            D += m_i @ (Jv_i.T @ Jv_i) + Jω_i.T @ R_i @ I_i @ R_i.T @ Jω_i
+        K = 0.5 * q_dot.T @ D @ q_dot
+        return K
+
     def potential_energy(self):
         """Returns the potential energy of the system."""
         raise NotImplementedError("Potential energy calculation not implemented.")
