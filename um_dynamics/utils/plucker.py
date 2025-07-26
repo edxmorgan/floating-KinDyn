@@ -1,5 +1,5 @@
 import casadi as cs
-import kinodyn_um.utils.transformation_matrix as tm
+import um_dynamics.utils.transformation_matrix as tm
 import numpy as np
 
 

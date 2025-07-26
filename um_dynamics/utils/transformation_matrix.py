@@ -2,7 +2,7 @@
 joint type."""
 import casadi as cs
 import numpy as np
-import kinodyn_um.utils.plucker as plucker
+import um_dynamics.utils.plucker as plucker
 
 def prismatic(xyz, rpy, axis, qi):
     T = cs.SX.zeros(4, 4)

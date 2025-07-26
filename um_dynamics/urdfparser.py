@@ -5,9 +5,9 @@ import casadi as cs
 import numpy as np
 from platform import machine, system
 from urdf_parser_py.urdf import URDF, Pose
-import kinodyn_um.utils.transformation_matrix as Transformation
-import kinodyn_um.utils.plucker as plucker
-import kinodyn_um.utils.quaternion as quatT
+import um_dynamics.utils.transformation_matrix as Transformation
+import um_dynamics.utils.plucker as plucker
+import um_dynamics.utils.quaternion as quatT
 
 class URDFparser(object):
     """Class that turns a chain from URDF to casadi functions."""
