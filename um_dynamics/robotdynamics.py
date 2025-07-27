@@ -325,7 +325,7 @@ class RobotDynamics(object):
 
                 if joint.type == "fixed":
                     if prev_joint == "fixed":
-                        XT_prev = ca.mtimes(
+                        XT_prev = plucker.spatial_mtimes(
                             plucker.XT(joint.origin.xyz, joint.origin.rpy),
                             XT_prev)
                     else:
@@ -344,7 +344,7 @@ class RobotDynamics(object):
                         joint.origin.rpy,
                         joint.axis, q_sign*q[i])
                     if prev_joint == "fixed":
-                        XJT = ca.mtimes(XJT, XT_prev)
+                        XJT = plucker.spatial_mtimes(XJT, XT_prev)
                     i_X_p.append(XJT)
                     i += 1
 
@@ -363,7 +363,7 @@ class RobotDynamics(object):
                         joint.axis,
                         q_sign*q[i])
                     if prev_joint == "fixed":
-                        XJT = ca.mtimes(XJT, XT_prev)
+                        XJT = plucker.spatial_mtimes(XJT, XT_prev)
                     i_X_p.append(XJT)
                     i += 1
 
