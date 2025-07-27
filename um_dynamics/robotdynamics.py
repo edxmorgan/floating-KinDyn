@@ -193,9 +193,9 @@ class RobotDynamics(object):
             else:
                 if floating_base:
                     p0_X_world = plucker.spatial_mtimes(base_T, world_T)
-                    i_X_0 = plucker.spatial_mtimes(i_X_p[i],p0_X_world)
+                    i_X_0 = plucker.spatial_mtimes(i_X_p[i], p0_X_world)
                 else:
-                    i_X_0 = i_X_p[i]
+                    i_X_0 = plucker.spatial_mtimes(i_X_p[i], base_T)
                     
             i_com_xyz = inertial_origins_params[i][:3]
             i_com_rpy = inertial_origins_params[i][3:]
