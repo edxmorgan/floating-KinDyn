@@ -153,19 +153,6 @@ class RobotDynamics(object):
 
         n_joints = self.get_n_joints(root, tip)
         
-        # baseT_xyz = ca.SX.sym('T_xyz', 3) # manipulator mount link xyz wrt floating body origin 
-        # baseT_rpy = ca.SX.sym('T_rpy', 3) # manipulator mount link rpy wrt floating body origin  
-
-        # # floaing pose in world coordinates
-        # x = ca.SX.sym('x') 
-        # y = ca.SX.sym('y')
-        # z = ca.SX.sym('z')
-        # thet = ca.SX.sym('thet')
-        # phi = ca.SX.sym('phi')
-        # psi = ca.SX.sym('psi')
-        # tr_n = ca.vertcat(x, y, z)
-        # eul = ca.vertcat(phi, thet, psi)
-        
         base_xyz = ca.SX.sym('base_xyz', 3) # manipulator mount link xyz wrt floating body origin 
         base_rpy = ca.SX.sym('base_rpy', 3) # manipulator mount link rpy wrt floating body origin  
         base_pose = ca.vertcat(base_xyz, base_rpy)
