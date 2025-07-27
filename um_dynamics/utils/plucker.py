@@ -2,21 +2,6 @@ import casadi as cs
 import um_dynamics.utils.transformation_matrix as tm
 import numpy as np
 
-
-# def numpy_skew_symmetric(v):
-#     """Returns a skew symmetric matrix from vector."""
-#     return np.array([[0, -v[2], v[1]],
-#                      [v[2], 0, -v[0]],
-#                      [-v[1], v[0], 0]])
-
-
-# def inertia_matrix(I):
-#     """Returns the 3x3 rotational inertia matrix given the inertia vector."""
-#     return np.array([I[0], I[1], I[2]],
-#                     [I[1], I[3], I[4]],
-#                     [I[2], I[4], I[5]])
-
-
 def motion_cross_product(v):
     """Returns the motion cross product matrix of a spatial vector."""
 
@@ -49,21 +34,6 @@ def motion_cross_product(v):
 def force_cross_product(v):
     """Returns the force cross product matrix of a spatial vector."""
     return -motion_cross_product(v).T
-
-
-# def spatial_inertia_matrix_Ic(ixx, ixy, ixz, iyy, iyz, izz, mass):
-#     """Returns the 6x6 spatial inertia matrix expressed at the center of
-#     mass."""
-#     Ic = np.zeros([6, 6])
-#     Ic[:3, :3] = np.array([[ixx, ixy, ixz],
-#                            [ixy, iyy, iyz],
-#                            [ixz, iyz, izz]])
-
-#     Ic[3, 3] = mass
-#     Ic[4, 4] = mass
-#     Ic[5, 5] = mass
-
-#     return Ic
 
 
 def spatial_inertia_matrix_IO(ixx, ixy, ixz, iyy, iyz, izz, mass, c):
