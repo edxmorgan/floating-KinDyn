@@ -200,6 +200,7 @@ class RobotDynamics(object):
         dynamic_parameters = [inertial_origins_params, m_params, I_params, g, q, q_dot, base_pose, world_pose]
         
         kinematic_dict = {
+            "n_joints": n_joints,
             "i_X_0s": i_X_0s,
             "icom_X_0s": icom_X_0s,
             "R_symx": R_symx,
@@ -361,9 +362,8 @@ class RobotDynamics(object):
 
         return i_X_p, tip_offset, inertial_origins_params, m_params, I_b_mat, I_params, g, q, q_dot
         
-    def _kinetic_energy(self, root, tip, kinematic_dict, floating_base=False):
+    def _kinetic_energy(self, n_joints, kinematic_dict, floating_base=False):
         """Returns the kinetic energy of the system."""
-        n_joints = self.get_n_joints(root, tip)
         inertial_origins_params, m_params, I_params, g, q, q_dot, base_pose, world_pose = kinematic_dict['parameters']
         D = ca.SX.zeros((n_joints, n_joints))  # D(q) is a symmetric positive definite matrix that is in general configuration dependent. The matrix  is called the inertia matrix.
         K = 0
@@ -377,9 +377,8 @@ class RobotDynamics(object):
         K = 0.5 * q_dot.T @ D @ q_dot
         return K , D
 
-    def _potential_energy(self, root, tip, kinematic_dict, floating_base=False):
+    def _potential_energy(self, n_joints, kinematic_dict, floating_base=False):
         """Returns the potential energy of the system."""
-        n_joints = self.get_n_joints(root, tip)
         inertial_origins_params, m_params, I_params, g, q, q_dot, base_pose, world_pose = kinematic_dict['parameters']
         P = 0
         for i in range(n_joints):
@@ -389,18 +388,77 @@ class RobotDynamics(object):
             P += m_i * g.T @ p_ci
         return P
 
-    def christoﬀel_symbols_cijk(q, D, i, j, k):
+    def _christoﬀel_symbols_cijk(self, q, D, i, j, k):
         """Returns the christoﬀel_symbols cijk"""
-        raise NotImplementedError("christoﬀel_symbols_cijk calculation not implemented.")
+        dkj_qi = ca.jacobian(D[k, j], q[i])
+        dki_qj = ca.jacobian(D[k, i], q[j])
+        dij_qk = ca.jacobian(D[i, j], q[k])
+        cijk = 0.5 * (dkj_qi + dki_qj - dij_qk)
+        return cijk
     
-    def build_model(self, root, tip, floating_base=False):
-        """Builds the model of the robot dynamics."""
-        self.kinematic_dict = self._kinematics(root, tip, floating_base)
-        self.K, self.D = self._kinetic_energy(root, tip, self.kinematic_dict, floating_base)
-        self.P  = self._potential_energy(root, tip, self.kinematic_dict, floating_base)
-        self.L = self.K - self.P
-        return self.kinematic_dict, self.K, self.D, self.P, self.L
+    def _build_coriolis_centrifugal_matrix(self, n_joints, q, q_dot, D, P):
+        C = ca.SX.zeros(n_joints, n_joints)
+        phi_g = ca.SX.zeros(n_joints, 1)
+        for k in range(n_joints):
+            for j in range(n_joints):
+                ckj = 0
+                for i in range(n_joints):
+                    qi = q_dot[i]
+                    cijk = self._christoﬀel_symbols_cijk(q, D, i, j, k)
+                    ckj += (cijk*qi)
+                C[k,j] = ckj
+            phi_g[k] = ca.gradient(P, q[k])
+        return C, phi_g
+    
+    def _build_gravity_term(self, P, q):
+        self.g_q = ca.gradient(P, q)
+        return self.g_q
+    
 
+    def build_model(self, root, tip, floating_base=False):
+        """
+        Constructs the symbolic model for the robot's dynamics.
+
+        This method calculates the key components of the Lagrangian dynamics model:
+        the inertia matrix (D), the Coriolis/centrifugal matrix (C), and the
+        gravity vector (g). These are stored as instance attributes for later use.
+
+        Args:
+            root (str): The name of the root link of the kinematic chain.
+            tip (str): The name of the tip link of the kinematic chain.
+            floating_base (bool): If True, models the base as a floating body.
+        
+        Returns:
+            A tuple containing all the calculated dynamic components, maintaining
+            the original API's return signature.
+        """
+        # Step 1: Build the fundamental kinematic model (transforms, Jacobians, etc.)
+        self.kinematic_dict = self._kinematics(root, tip, floating_base)
+        
+        # Step 2: Extract necessary symbolic variables and parameters from the model
+        params = self.kinematic_dict['parameters']
+        q, q_dot = params[4], params[5]
+        n_joints = self.kinematic_dict['n_joints']
+
+        # Step 3: Calculate energy components based on the Lagrangian formulation
+        self.K, self.D = self._kinetic_energy(n_joints, self.kinematic_dict, floating_base)
+        self.P = self._potential_energy(n_joints, self.kinematic_dict, floating_base)
+        self.L = self.K - self.P
+
+        # Step 4: Derive the dynamic matrices from the energy components
+        # Gravity vector is the gradient of potential energy
+        self.g_q = self._build_gravity_term(self.P, q)
+        
+        # Coriolis matrix is derived from the inertia matrix and joint velocities
+        self.C, self.phi_g  = self._build_coriolis_centrifugal_matrix(n_joints, q, q_dot, self.D, self.P)
+
+        # Step 5: Perform assertions to ensure matrix dimensions are consistent
+        assert self.D.shape == (n_joints, n_joints), f"Inertia matrix D has incorrect shape: {self.D.shape}"
+        assert self.C.shape == (n_joints, n_joints), f"Coriolis matrix C has incorrect shape: {self.C.shape}"
+        assert self.g_q.shape == (n_joints, 1), f"Gravity vector g_q has incorrect shape: {self.g_q.shape}"
+        
+        return self.kinematic_dict, self.K, self.P, self.L, self.D, self.C, self.phi_g, self.g_q
+    
     @property
     @require_built_model
     def get_kinematic_dict(self):
@@ -441,7 +499,7 @@ class RobotDynamics(object):
     @require_built_model
     def get_coriolis_centrifugal_matrix(self):
         """Returns the Coriolis and centrifugal matrix of the system."""
-        raise NotImplementedError("Coriolis and centrifugal matrix calculation not implemented.")
+        return self.C
 
     @property
     @require_built_model
