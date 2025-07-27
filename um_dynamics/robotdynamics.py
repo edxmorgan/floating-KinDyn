@@ -428,8 +428,7 @@ class RobotDynamics(object):
             floating_base (bool): If True, models the base as a floating body.
         
         Returns:
-            A tuple containing all the calculated dynamic components, maintaining
-            the original API's return signature.
+            A tuple containing all the calculated dynamic components.
         """
         # Step 1: Build the fundamental kinematic model (transforms, Jacobians, etc.)
         self.kinematic_dict = self._kinematics(root, tip, floating_base)
@@ -446,7 +445,7 @@ class RobotDynamics(object):
 
         # Step 4: Derive the dynamic matrices from the energy components
         # Gravity vector is the gradient of potential energy
-        self.g_q = self._build_gravity_term(self.P, q)
+        self.g = self._build_gravity_term(self.P, q)
         
         # Coriolis matrix is derived from the inertia matrix and joint velocities
         self.C = self._build_coriolis_centrifugal_matrix(n_joints, q, q_dot, self.D)
@@ -454,9 +453,9 @@ class RobotDynamics(object):
         # Step 5: Perform assertions to ensure matrix dimensions are consistent
         assert self.D.shape == (n_joints, n_joints), f"Inertia matrix D has incorrect shape: {self.D.shape}"
         assert self.C.shape == (n_joints, n_joints), f"Coriolis matrix C has incorrect shape: {self.C.shape}"
-        assert self.g_q.shape == (n_joints, 1), f"Gravity vector g_q has incorrect shape: {self.g_q.shape}"
+        assert self.g.shape == (n_joints, 1), f"Gravity vector g_q has incorrect shape: {self.g_q.shape}"
         
-        return self.kinematic_dict, self.K, self.P, self.L, self.D, self.C, self.g_q
+        return self.kinematic_dict, self.K, self.P, self.L, self.D, self.C, self.g
     
     @property
     @require_built_model
@@ -504,4 +503,4 @@ class RobotDynamics(object):
     @require_built_model
     def get_gravity_vector(self):
         """Returns the gravity vector of the system."""
-        raise NotImplementedError("Gravity vector calculation not implemented.")
+        return self.g
