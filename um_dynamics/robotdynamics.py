@@ -396,7 +396,7 @@ class RobotDynamics(object):
         cijk = 0.5 * (dkj_qi + dki_qj - dij_qk)
         return cijk
     
-    def _build_coriolis_centrifugal_matrix(self, n_joints, q, q_dot, D, P):
+    def _build_coriolis_centrifugal_matrix(self, n_joints, q, q_dot, D):
         C = ca.SX.zeros(n_joints, n_joints)
         phi_g = ca.SX.zeros(n_joints, 1)
         for k in range(n_joints):
@@ -407,8 +407,7 @@ class RobotDynamics(object):
                     cijk = self._christoﬀel_symbols_cijk(q, D, i, j, k)
                     ckj += (cijk*qi)
                 C[k,j] = ckj
-            phi_g[k] = ca.gradient(P, q[k])
-        return C, phi_g
+        return C
     
     def _build_gravity_term(self, P, q):
         self.g_q = ca.gradient(P, q)
@@ -450,14 +449,14 @@ class RobotDynamics(object):
         self.g_q = self._build_gravity_term(self.P, q)
         
         # Coriolis matrix is derived from the inertia matrix and joint velocities
-        self.C, self.phi_g  = self._build_coriolis_centrifugal_matrix(n_joints, q, q_dot, self.D, self.P)
+        self.C = self._build_coriolis_centrifugal_matrix(n_joints, q, q_dot, self.D)
 
         # Step 5: Perform assertions to ensure matrix dimensions are consistent
         assert self.D.shape == (n_joints, n_joints), f"Inertia matrix D has incorrect shape: {self.D.shape}"
         assert self.C.shape == (n_joints, n_joints), f"Coriolis matrix C has incorrect shape: {self.C.shape}"
         assert self.g_q.shape == (n_joints, 1), f"Gravity vector g_q has incorrect shape: {self.g_q.shape}"
         
-        return self.kinematic_dict, self.K, self.P, self.L, self.D, self.C, self.phi_g, self.g_q
+        return self.kinematic_dict, self.K, self.P, self.L, self.D, self.C, self.g_q
     
     @property
     @require_built_model
