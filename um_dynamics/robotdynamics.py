@@ -207,8 +207,8 @@ class RobotDynamics(object):
         end_i_X_0 = plucker.spatial_mtimes(tip_offset , i_X_0)
         i_X_0s.append(end_i_X_0)
         
-        R_symx, Fks, qFks, geo_J, body_J, anlyt_J = self.compute_Fk_and_jacobians(q, i_X_0s)
-        com_R_symx, com_Fks, com_qFks, com_geo_J, com_body_J, com_anlyt_J = self.compute_Fk_and_jacobians(q, icom_X_0s)
+        R_symx, Fks, qFks, geo_J, body_J, anlyt_J = self._compute_Fk_and_jacobians(q, i_X_0s)
+        com_R_symx, com_Fks, com_qFks, com_geo_J, com_body_J, com_anlyt_J = self._compute_Fk_and_jacobians(q, icom_X_0s)
         
         dynamic_parameters = [inertial_origins_params, m_params, I_params, g, q, q_dot, base_pose, world_pose]
         
@@ -233,7 +233,7 @@ class RobotDynamics(object):
         return kinematic_dict
     
     
-    def compute_Fk_and_jacobians(self, q, i_X_0s):
+    def _compute_Fk_and_jacobians(self, q, i_X_0s):
         Fks = []  # collect forward kinematics in euler form
         qFks = []  # collect forward kinematics in quaternion form
         geo_J = []          # collect geometric J’s
