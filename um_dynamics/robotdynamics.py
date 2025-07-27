@@ -483,9 +483,15 @@ class RobotDynamics(object):
 
     @property
     @require_built_model
-    def get_acceleration(self):
+    def get_inverse_dynamics(self):
         """Returns the equations of motion for the system."""
-        raise NotImplementedError("Acceleration calculation not implemented.")
+        raise NotImplementedError("Inverse dynamics calculation not implemented.")
+    
+    @property
+    @require_built_model
+    def get_forward_dynamics(self):
+        """Returns the equations of motion for the system."""
+        raise NotImplementedError("Forward dynamics calculation not implemented.")
 
     @property
     @require_built_model
