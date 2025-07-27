@@ -12,7 +12,7 @@ import um_dynamics.utils.quaternion as quatT
 def require_built_model(func):
     """Decorator that ensures the dynamics model has been built."""
     def wrapper(self, *args, **kwargs):
-        required_attrs = ['K', 'P', 'L']
+        required_attrs = ['kinematic_dict', 'K', 'P', 'L']
         missing = [name for name in required_attrs if not hasattr(self, name)]
         if missing:
             raise AttributeError(
@@ -389,6 +389,10 @@ class RobotDynamics(object):
             P += m_i * g.T @ p_ci
         return P
 
+    def christoﬀel_symbols_cijk(q, D, i, j, k):
+        """Returns the christoﬀel_symbols cijk"""
+        raise NotImplementedError("christoﬀel_symbols_cijk calculation not implemented.")
+    
     def build_model(self, root, tip, floating_base=False):
         """Builds the model of the robot dynamics."""
         self.kinematic_dict = self._kinematics(root, tip, floating_base)
