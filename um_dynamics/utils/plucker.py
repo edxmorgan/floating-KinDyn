@@ -115,7 +115,6 @@ def XT(xyz, rpy):
     rotation_matrix = rotation_rpy(rpy[0], rpy[1], rpy[2])
     return spatial_transform(rotation_matrix, xyz)
 
-
 def extractEr(i_X_p):
     "returns E and rx"
     E0 = i_X_p[:3,:3]
@@ -155,6 +154,16 @@ def inverse_spatial_transform(i_X_p):
     p_X_i[3:,:3] = r_x_E_T
     return p_X_i
  
+def analytic_to_geometric(Ja, T):
+    """
+    Convert a 6×n analytic Jacobian (XYZ Euler) to geometric.
+    Ja  – analytic Jacobian  (6×n SX/DM)
+    """
+    # split linear / angular blocks
+    Jv = Ja[0:3, :]                  # linear rows stay the same
+    Jθ = Ja[3:6, :]                  # Euler‑rate rows → map
+    Jω = T @ Jθ                      # angular velocity rows
+    return cs.vertcat(Jv, Jω)        # 6×n geometric Jacobian
 
 def rotation_matrix_to_euler(R, order='zyx'):
     """

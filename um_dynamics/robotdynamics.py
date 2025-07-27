@@ -239,23 +239,12 @@ class RobotDynamics(object):
             Tb = Transformation.euler_xyz_rate_to_body_T(phi, theta, psi)
             
             # 6×n geometric Jacobian
-            Jg         = self.analytic_to_geometric(Ja, Ts)
-            Jb         = self.analytic_to_geometric(Ja, Tb)
+            Jg         = plucker.analytic_to_geometric(Ja, Ts)
+            Jb         = plucker.analytic_to_geometric(Ja, Tb)
             geo_J.append(Jg)
             body_J.append(Jb)
         return R_symx, Fks, qFks, geo_J, body_J, anlyt_J
 
-
-    def analytic_to_geometric(self,Ja, T):
-        """
-        Convert a 6×n analytic Jacobian (XYZ Euler) to geometric.
-        Ja  – analytic Jacobian  (6×n SX/DM)
-        """
-        # split linear / angular blocks
-        Jv = Ja[0:3, :]                  # linear rows stay the same
-        Jθ = Ja[3:6, :]                  # Euler‑rate rows → map
-        Jω = T @ Jθ                      # angular velocity rows
-        return cs.vertcat(Jv, Jω)        # 6×n geometric Jacobian
 
     def links_inertial(self, n_links: int):
         """
