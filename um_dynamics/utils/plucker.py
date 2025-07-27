@@ -1,11 +1,11 @@
-import casadi as cs
+import casadi as ca
 import um_dynamics.utils.transformation_matrix as tm
 import numpy as np
 
 def motion_cross_product(v):
     """Returns the motion cross product matrix of a spatial vector."""
 
-    mcp = cs.SX.zeros(6, 6)
+    mcp = ca.SX.zeros(6, 6)
 
     mcp[0, 1] = -v[2]
     mcp[0, 2] = v[1]
@@ -38,16 +38,16 @@ def force_cross_product(v):
 
 def spatial_inertia_matrix_IO(ixx, ixy, ixz, iyy, iyz, izz, mass, c):
     """Returns the 6x6 spatial inertia matrix expressed at the origin in symbolic representation"""
-    IO_sym = cs.SX.zeros(6, 6)
+    IO_sym = ca.SX.zeros(6, 6)
 
-    _Ic = cs.SX(3,3)
-    _Ic[0, :] = cs.horzcat(ixx, ixy, ixz)
-    _Ic[1, :] = cs.horzcat(ixy, iyy, iyz)
-    _Ic[2, :] = cs.horzcat(ixz, iyz, izz)
+    _Ic = ca.SX(3,3)
+    _Ic[0, :] = ca.horzcat(ixx, ixy, ixz)
+    _Ic[1, :] = ca.horzcat(ixy, iyy, iyz)
+    _Ic[2, :] = ca.horzcat(ixz, iyz, izz)
 
-    m_eye = cs.diag(cs.vertcat(mass, mass, mass))
+    m_eye = ca.diag(ca.vertcat(mass, mass, mass))
 
-    c_sk = cs.skew(c)
+    c_sk = ca.skew(c)
     IO_sym[:3,:3] = _Ic + (mass*(c_sk@c_sk.T))
 
     IO_sym[3:,3:] = m_eye
@@ -58,38 +58,38 @@ def spatial_inertia_matrix_IO(ixx, ixy, ixz, iyy, iyz, izz, mass, c):
 
 
 def rotation_rpy(roll, pitch, yaw):
-    R = cs.SX(3, 3)
+    R = ca.SX(3, 3)
 
-    R[0,0] = cs.cos(yaw)*cs.cos(pitch)
-    R[0,1] = -cs.sin(yaw)*cs.cos(roll) + cs.cos(yaw)*cs.sin(pitch)*cs.sin(roll)
-    R[0,2] = cs.sin(yaw)*cs.sin(roll) + cs.cos(yaw)*cs.cos(roll)*cs.sin(pitch)
+    R[0,0] = ca.cos(yaw)*ca.cos(pitch)
+    R[0,1] = -ca.sin(yaw)*ca.cos(roll) + ca.cos(yaw)*ca.sin(pitch)*ca.sin(roll)
+    R[0,2] = ca.sin(yaw)*ca.sin(roll) + ca.cos(yaw)*ca.cos(roll)*ca.sin(pitch)
 
-    R[1,0] = cs.sin(yaw)*cs.cos(pitch)
-    R[1,1] = cs.cos(yaw)*cs.cos(roll) + cs.sin(roll)*cs.sin(pitch)*cs.sin(yaw)
-    R[1,2] = -cs.cos(yaw)*cs.sin(roll) + cs.sin(pitch)*cs.sin(yaw)*cs.cos(roll)
+    R[1,0] = ca.sin(yaw)*ca.cos(pitch)
+    R[1,1] = ca.cos(yaw)*ca.cos(roll) + ca.sin(roll)*ca.sin(pitch)*ca.sin(yaw)
+    R[1,2] = -ca.cos(yaw)*ca.sin(roll) + ca.sin(pitch)*ca.sin(yaw)*ca.cos(roll)
 
-    R[2,0] = -cs.sin(pitch)
-    R[2,1] = cs.cos(pitch)*cs.sin(roll)
-    R[2,2] = cs.cos(pitch)*cs.cos(roll)
+    R[2,0] = -ca.sin(pitch)
+    R[2,1] = ca.cos(pitch)*ca.sin(roll)
+    R[2,2] = ca.cos(pitch)*ca.cos(roll)
     return R
 
 # def spatial_force_transform(R, r):
 #     """Returns the spatial force transform from a 3x3 rotation matrix
 #     and a 3x1 displacement vector."""
-#     X = cs.SX.zeros(6, 6)
+#     X = ca.SX.zeros(6, 6)
 #     X[:3, :3] = R.T
 #     X[3:, 3:] = R.T
-#     X[:3, 3:] = cs.mtimes(cs.skew(r), R.T)
+#     X[:3, 3:] = ca.mtimes(ca.skew(r), R.T)
 #     return X
 
 
 def spatial_transform(R, r):
     """Returns the spatial motion transform from a 3x3 rotation matrix
     and a 3x1 displacement vector."""
-    X = cs.SX.zeros(6, 6)
+    X = ca.SX.zeros(6, 6)
     X[:3, :3] = R
     X[3:, 3:] = R
-    X[3:, :3] = -cs.mtimes(R, cs.skew(r))
+    X[3:, :3] = -ca.mtimes(R, ca.skew(r))
     return X
 
 def XJT_revolute(xyz, rpy, axis, qi):
@@ -125,8 +125,8 @@ def extractEr(i_X_p):
 
 def spatial_to_homogeneous(X):
     R, _, rx = extractEr(X)
-    p = cs.inv_skew(rx)
-    T = cs.SX.eye(4)
+    p = ca.inv_skew(rx)
+    T = ca.SX.eye(4)
     T[:3, :3] = R
     T[:3, 3] = p
     return T, R, p
@@ -145,7 +145,7 @@ def inverse_spatial_transform(i_X_p):
     E4 = i_X_p[3:,3:] #E0 == E4
     Er_x = -i_X_p[3:,:3]
 
-    p_X_i = cs.SX.zeros(6, 6)
+    p_X_i = ca.SX.zeros(6, 6)
     E_T = E0.T
     p_X_i[:3,:3] = E_T
     p_X_i[3:,3:] = E_T
@@ -163,7 +163,7 @@ def analytic_to_geometric(Ja, T):
     Jv = Ja[0:3, :]                  # linear rows stay the same
     Jθ = Ja[3:6, :]                  # Euler‑rate rows → map
     Jω = T @ Jθ                      # angular velocity rows
-    return cs.vertcat(Jv, Jω)        # 6×n geometric Jacobian
+    return ca.vertcat(Jv, Jω)        # 6×n geometric Jacobian
 
 def rotation_matrix_to_euler(R, order='zyx'):
     """
@@ -196,65 +196,65 @@ def rotation_matrix_to_euler(R, order='zyx'):
         # roll (phi)  : rotation about x-axis
 
         # Compute pitch
-        pitch = cs.asin(-R[2, 0])
+        pitch = ca.asin(-R[2, 0])
 
         # To handle the singularity when cos(pitch) is close to zero
-        cos_pitch = cs.sqrt(1 - R[2, 0]**2)
+        cos_pitch = ca.sqrt(1 - R[2, 0]**2)
 
         # Define a small threshold to detect singularity
         epsilon = 1e-6
 
         # Compute yaw and roll
-        yaw = cs.if_else(cos_pitch > epsilon,
-                        cs.atan2(R[1, 0], R[0, 0]),
+        yaw = ca.if_else(cos_pitch > epsilon,
+                        ca.atan2(R[1, 0], R[0, 0]),
                         0)  # When cos(pitch) is near zero, set yaw to zero
 
-        roll = cs.if_else(cos_pitch > epsilon,
-                         cs.atan2(R[2, 1], R[2, 2]),
-                         cs.atan2(-R[1, 2], R[1, 1]))
+        roll = ca.if_else(cos_pitch > epsilon,
+                         ca.atan2(R[2, 1], R[2, 2]),
+                         ca.atan2(-R[1, 2], R[1, 1]))
 
-        euler = cs.vertcat(roll, pitch, yaw)
+        euler = ca.vertcat(roll, pitch, yaw)
 
     elif order == 'xyz':
         # Compute pitch
-        pitch = cs.asin(R[0, 2])
+        pitch = ca.asin(R[0, 2])
 
         # Handle singularity
-        cos_pitch = cs.sqrt(1 - R[0, 2]**2)
+        cos_pitch = ca.sqrt(1 - R[0, 2]**2)
         epsilon = 1e-6
 
-        roll = cs.if_else(cos_pitch > epsilon,
-                         cs.atan2(-R[1, 2], R[2, 2]),
+        roll = ca.if_else(cos_pitch > epsilon,
+                         ca.atan2(-R[1, 2], R[2, 2]),
                          0)
 
-        yaw = cs.if_else(cos_pitch > epsilon,
-                        cs.atan2(-R[0, 1], R[0, 0]),
-                        cs.atan2(R[1, 0], R[1, 1]))
+        yaw = ca.if_else(cos_pitch > epsilon,
+                        ca.atan2(-R[0, 1], R[0, 0]),
+                        ca.atan2(R[1, 0], R[1, 1]))
 
-        euler = cs.vertcat(roll, pitch, yaw)
+        euler = ca.vertcat(roll, pitch, yaw)
 
     elif order == 'zyz':
         # Compute theta
-        theta = cs.acos(R[2, 2])
+        theta = ca.acos(R[2, 2])
 
         # Handle singularity when theta is 0 or pi
-        sin_theta = cs.sin(theta)
+        sin_theta = ca.sin(theta)
         epsilon = 1e-6
 
-        phi = cs.if_else(sin_theta > epsilon,
-                        cs.atan2(R[2, 0], R[2, 1]),
+        phi = ca.if_else(sin_theta > epsilon,
+                        ca.atan2(R[2, 0], R[2, 1]),
                         0)
 
-        psi = cs.if_else(sin_theta > epsilon,
-                        cs.atan2(R[0, 2], -R[1, 2]),
-                        cs.atan2(-R[1, 0], R[0, 0]))
+        psi = ca.if_else(sin_theta > epsilon,
+                        ca.atan2(R[0, 2], -R[1, 2]),
+                        ca.atan2(-R[1, 0], R[0, 0]))
 
-        euler = cs.vertcat(phi, theta, psi)
+        euler = ca.vertcat(phi, theta, psi)
 
     else:
         raise NotImplementedError(f"Euler order '{order}' is not implemented yet.")
 
     # Normalize angles to be within [-pi, pi]
-    euler = cs.fmod(euler + cs.pi, 2 * cs.pi) - cs.pi
+    euler = ca.fmod(euler + ca.pi, 2 * ca.pi) - ca.pi
 
     return euler
