@@ -92,7 +92,7 @@ class RobotDynamics(object):
         """
         n_joints = self.get_n_joints(root, tip)
         
-        i_X_0s, R_symx, Fks, qFks, geo_J, body_J, anlyt_J, args = self._kinematics(root, tip, floating_base=floating_base)
+        i_X_0s, R_symx, Fks, qFks, geo_J, body_J, anlyt_J, com_offsets, args = self._kinematics(root, tip, floating_base=floating_base)
         
         m, I_b_mat, I_params, q, q_dot, tr_n, eul, baseT_xyz, baseT_rpy = args
         base_T_sym = cs.vertcat(baseT_rpy, baseT_xyz) # transform from origin to 1st child
@@ -157,7 +157,7 @@ class RobotDynamics(object):
         psi = cs.SX.sym('psi')
         eul = cs.vertcat(phi, thet, psi)  # base parameterizedorientation
 
-        i_X_p, Si, Ic , tip_offsets, m, I_b_mat, I_params, q, q_dot = self._model_calculation(root, tip)
+        i_X_p, Si, Ic , tip_offsets, m, I_b_mat, I_params, q, q_dot, com_offsets = self._model_calculation(root, tip)
         T_Base = plucker.XT(baseT_xyz, baseT_rpy)
 
         i_X_0s = []
@@ -181,7 +181,7 @@ class RobotDynamics(object):
         
         args = [m, I_b_mat,I_params, q, q_dot, tr_n, eul, baseT_xyz, baseT_rpy]
 
-        return i_X_0s, R_symx, Fks, qFks, geo_J, body_J, anlyt_J, args
+        return i_X_0s, R_symx, Fks, qFks, geo_J, body_J, anlyt_J, com_offsets, args
     
     
     def compute_Fk_and_jacobians(self, q, i_X_0s):
@@ -270,6 +270,7 @@ class RobotDynamics(object):
         spatial_inertias = []
         i_X_p = []
         Sis = []
+        com_offsets = []  # store CoM local offsets
         tip_offset = cs.DM_eye(6)
         prev_joint = None
         n_actuated = 0
@@ -347,8 +348,10 @@ class RobotDynamics(object):
                 link = self.robot_desc.link_map[item]
 
                 if link.inertial is None:
+                    com_offsets.append(np.zeros(3)) # CoM offset default if no inertial info
                     spatial_inertia = np.zeros((6, 6))
                 else:
+                    com_offsets.append(link.inertial.origin.xyz) # STORE the CoM offset
                     I = link.inertial.inertia
                     spatial_inertia = plucker.spatial_inertia_matrix_IO(
                         I.ixx,
@@ -368,12 +371,12 @@ class RobotDynamics(object):
                 if link.name == tip:
                     spatial_inertias.append(spatial_inertia)
 
-        return i_X_p, Sis, spatial_inertias, tip_offset, m, I_b_mat, I_params, q, q_dot
+        return i_X_p, Sis, spatial_inertias, tip_offset, m, I_b_mat, I_params, q, q_dot, com_offsets
         
-    def kinetic_enegy(self, root, tip, floating_base=False):
+    def kinetic_energy(self, root, tip, floating_base=False):
         """Returns the kinetic energy of the system."""
         n_joints = self.get_n_joints(root, tip)
-        i_X_0s, R_symx, Fks, qFks, geo_J, body_J, anlyt_J, args = self._kinematics(root, tip, floating_base=floating_base)
+        i_X_0s, R_symx, Fks, qFks, geo_J, body_J, anlyt_J, com_offsets, args = self._kinematics(root, tip, floating_base=floating_base)
         m, I_b_mat, I_params, q, q_dot, tr_n, eul, baseT_xyz, baseT_rpy = args
         D = cs.SX.zeros((n_joints, n_joints))  # D(q) is a symmetric positive definite matrix that is in general configuration dependent. The matrix  is called the inertia matrix.
         for i in range(n_joints):
@@ -388,18 +391,19 @@ class RobotDynamics(object):
 
     def potential_energy(self, root, tip, floating_base=False):
         """Returns the potential energy of the system."""
-        # n_joints = self.get_n_joints(root, tip)
-        # i_X_0s, R_symx, Fks, qFks, geo_J, body_J, anlyt_J, args = self._kinematics(root, tip, floating_base=floating_base)
-        # m, I_b_mat, I_params, q, q_dot, tr_n, eul, baseT_xyz, baseT_rpy = args
-        # g = cs.SX.sym("g", 3)  # gravity vector
-        # P = 0
-        # for i in range(n_joints):
-        #     R_i = R_symx[i]
-        #     p_i = Fks[i][0:3]
-        #     m_i = m[i]
-        #     P += m_i * g.T @ R_i.T @ p_i
-        # return P
-        raise NotImplementedError("Potential energy calculation not implemented.")
+        n_joints = self.get_n_joints(root, tip)
+        i_X_0s, R_symx, Fks, qFks, geo_J, body_J, anlyt_J, com_offsets, args = self._kinematics(root, tip, floating_base=floating_base)
+        m, I_b_mat, I_params, q, q_dot, tr_n, eul, baseT_xyz, baseT_rpy = args
+        g = cs.SX.sym("g", 3)  # gravity vector
+        P = 0
+        for i in range(n_joints):
+            p_origin_i = Fks[i][0:3] # Position of the link's origin frame in world coordinates
+            R_i = R_symx[i] # Rotation of the link's frame relative to world
+            c_i = com_offsets[i] # Position of the center of mass relative to the link's origin
+            p_ci = p_origin_i + R_i @ c_i # Position of the center of mass in world coordinates
+            m_i = m[i] # Mass of the link
+            P += m_i * g.T @ p_ci
+        return P, g, args
     
     def lagrangian(self, root, tip):
         """Returns the Lagrangian of the system."""
