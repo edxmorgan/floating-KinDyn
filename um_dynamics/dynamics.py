@@ -12,7 +12,7 @@ import um_dynamics.utils.quaternion as quatT
 def require_built_model(func):
     """Decorator that ensures the dynamics model has been built."""
     def wrapper(self, *args, **kwargs):
-        required_attrs = ['kinematic_dict', 'K', 'P', 'L']
+        required_attrs = ['kinematic_dict', 'K', 'P', 'L', 'D', 'C', 'g', 'joint_torque', 'qdd']
         missing = [name for name in required_attrs if not hasattr(self, name)]
         if missing:
             raise AttributeError(
