@@ -499,7 +499,7 @@ class RobotDynamics(object):
     @require_built_model
     def get_inverse_dynamics(self):
         """Returns the inverse dynamics for the system."""
-        raise NotImplementedError("Inverse dynamics calculation not implemented.")
+        raise self.joint_torque
     
     @property
     @require_built_model
