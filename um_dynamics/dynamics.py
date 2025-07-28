@@ -469,7 +469,7 @@ class RobotDynamics(object):
         self.joint_torque = self._build_inverse_dynamics(self.D, self.C, q_dotdot, q_dot, self.g)
         assert self.joint_torque.shape == (n_joints, 1), f"Inverse dynamics vector qdd has incorrect shape: {self.joint_torque.shape}"
         
-        return self.kinematic_dict, self.K, self.P, self.L, self.D, self.C, self.g, self.qdd
+        return self.kinematic_dict, self.K, self.P, self.L, self.D, self.C, self.g, self.qdd, self.joint_torque
     
     @property
     @require_built_model
