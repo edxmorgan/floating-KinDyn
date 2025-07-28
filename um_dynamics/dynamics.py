@@ -184,9 +184,8 @@ class RobotDynamics(object):
                 else:
                     i_X_0 = plucker.spatial_mtimes(i_X_p[i], base_T)
                     
-            i_com_xyz = inertial_origins_params[i][:3]
-            i_com_rpy = inertial_origins_params[i][3:]
-            com_X_i = plucker.XT(i_com_xyz, i_com_rpy)
+            i_com_xyz = inertial_origins_params[i]
+            com_X_i = plucker.XT(i_com_xyz, [0,0,0])
             
             icom_X_0s.append(plucker.spatial_mtimes(com_X_i, i_X_0))
             i_X_0s.append(i_X_0)  # transformation of joint i wrt base origin
@@ -268,7 +267,7 @@ class RobotDynamics(object):
         I_params = []
         inertial_origins_params = []
         for k in range(n_links):
-            origin_xyz_rpy = ca.SX.sym(f"origin_xyz_rpy_{k}", 6)
+            origin_xyz = ca.SX.sym(f"origin_xyz_{k}", 3)
             m = ca.SX.sym(f"m_{k}")
             Ixx = ca.SX.sym(f"Ixx_{k}")
             Iyy = ca.SX.sym(f"Iyy_{k}")
@@ -282,7 +281,7 @@ class RobotDynamics(object):
                 ca.hcat([Ixy, Iyy, Iyz]),
                 ca.hcat([Ixz, Iyz, Izz])
             )
-            inertial_origins_params.append(origin_xyz_rpy)
+            inertial_origins_params.append(origin_xyz)
             m_params.append(m)
             I_tensors.append(I_k)
             I_params.extend([Ixx, Iyy, Izz, Ixy, Ixz, Iyz])
@@ -399,7 +398,6 @@ class RobotDynamics(object):
     
     def _build_coriolis_centrifugal_matrix(self, n_joints, q, q_dot, D):
         C = ca.SX.zeros(n_joints, n_joints)
-        phi_g = ca.SX.zeros(n_joints, 1)
         for k in range(n_joints):
             for j in range(n_joints):
                 ckj = 0
@@ -498,7 +496,7 @@ class RobotDynamics(object):
     @require_built_model
     def get_inverse_dynamics(self):
         """Returns the inverse dynamics for the system."""
-        raise self.joint_torque
+        return self.joint_torque
     
     @property
     @require_built_model
