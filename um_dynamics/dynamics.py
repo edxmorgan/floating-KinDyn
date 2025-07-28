@@ -220,7 +220,6 @@ class RobotDynamics(object):
         }
         return kinematic_dict
     
-    
     def _compute_Fk_and_jacobians(self, q, i_X_0s):
         Fks = []  # collect forward kinematics in euler form
         qFks = []  # collect forward kinematics in quaternion form
