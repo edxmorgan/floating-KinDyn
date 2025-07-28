@@ -106,7 +106,7 @@ class RobotDynamics(object):
         n_joints = self.get_n_joints(root, tip)
         
         kinematic_dict = self._kinematics(root, tip, floating_base=floating_base)
-        inertial_origins_params, m_params, I_params, g, q, q_dot, base_pose, world_pose = kinematic_dict['parameters']
+        inertial_origins_params, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
         
         internal_fk_eval_euler = ca.Function("internal_fkeval_euler", [q, base_pose, world_pose], [kinematic_dict['Fks'][-1]])
         
@@ -168,7 +168,7 @@ class RobotDynamics(object):
         world_rpy = ca.vertcat(world_phi, world_thet, world_psi)
         world_pose = ca.vertcat(world_xyz, world_rpy)
 
-        i_X_p, tip_offset, inertial_origins_params, m_params, I_b_mats, I_params, g, q, q_dot = self._model_calculation(root, tip)
+        i_X_p, tip_offset, inertial_origins_params, m_params, I_b_mats, I_params, vec_g, q, q_dot, q_dotdot, tau = self._model_calculation(root, tip)
         i_X_0s = [] # transformation of joint i wrt base origin
         icom_X_0s = [] # transformation of center of mass i wrt base origin
         
@@ -197,7 +197,7 @@ class RobotDynamics(object):
         R_symx, Fks, qFks, geo_J, body_J, anlyt_J = self._compute_Fk_and_jacobians(q, i_X_0s)
         com_R_symx, com_Fks, com_qFks, com_geo_J, com_body_J, com_anlyt_J = self._compute_Fk_and_jacobians(q, icom_X_0s)
         
-        dynamic_parameters = [inertial_origins_params, m_params, I_params, g, q, q_dot, base_pose, world_pose]
+        dynamic_parameters = [inertial_origins_params, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose]
         
         kinematic_dict = {
             "n_joints": n_joints,
@@ -302,10 +302,12 @@ class RobotDynamics(object):
         prev_joint = None
         i = 0
         
-        inertial_origins_params, m_params, I_b_mat, I_params = self.links_inertial(n_joints)
+        inertial_origins_params, m_params, I_b_mats, I_params = self.links_inertial(n_joints)
         q = ca.SX.sym("q", n_joints)
         q_dot = ca.SX.sym("q_dot", n_joints)
-        g = ca.SX.sym("g", 3)  # gravity vector
+        vec_g = ca.SX.sym("vec_g", 3)  # gravity vector
+        tau = ca.SX.sym("tau", n_joints) # joint torque
+        q_dotdot = ca.SX.sym("q_dotdot", n_joints) # joint accelerations
 
         for item in chain:
             if item in self.robot_desc.joint_map:
@@ -360,11 +362,11 @@ class RobotDynamics(object):
                     if joint.type == "fixed":
                         tip_offset = XT_prev
 
-        return i_X_p, tip_offset, inertial_origins_params, m_params, I_b_mat, I_params, g, q, q_dot
+        return i_X_p, tip_offset, inertial_origins_params, m_params, I_b_mats, I_params, vec_g, q, q_dot, q_dotdot, tau
         
     def _kinetic_energy(self, n_joints, kinematic_dict, floating_base=False):
         """Returns the kinetic energy of the system."""
-        inertial_origins_params, m_params, I_params, g, q, q_dot, base_pose, world_pose = kinematic_dict['parameters']
+        inertial_origins_params, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
         D = ca.SX.zeros((n_joints, n_joints))  # D(q) is a symmetric positive definite matrix that is in general configuration dependent. The matrix  is called the inertia matrix.
         K = 0
         for i in range(n_joints):
@@ -379,13 +381,13 @@ class RobotDynamics(object):
 
     def _potential_energy(self, n_joints, kinematic_dict, floating_base=False):
         """Returns the potential energy of the system."""
-        inertial_origins_params, m_params, I_params, g, q, q_dot, base_pose, world_pose = kinematic_dict['parameters']
+        inertial_origins_params, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
         P = 0
         for i in range(n_joints):
             com_Fks = kinematic_dict['com_Fks'][i]
             p_ci = com_Fks[0:3]  # Position of the center of mass in world coordinates
             m_i = m_params[i] # Mass of the link
-            P += m_i * g.T @ p_ci
+            P += m_i * vec_g.T @ p_ci
         return P
 
     def _christoﬀel_symbols_cijk(self, q, D, i, j, k):
@@ -410,9 +412,16 @@ class RobotDynamics(object):
         return C
     
     def _build_gravity_term(self, P, q):
-        self.g_q = ca.gradient(P, q)
-        return self.g_q
+        g_q = ca.gradient(P, q)
+        return g_q
     
+    def _build_forward_dynamics(self, D, C, q_dot, g, tau):
+        qdd = ca.inv(D)@(tau - C@q_dot - g)
+        return qdd
+
+    def _build_inverse_dynamics(self, D, C, q_dotdot, q_dot, g):
+        joint_torque = D@q_dotdot + C@q_dot + g
+        return joint_torque
 
     def build_model(self, root, tip, floating_base=False):
         """
@@ -434,8 +443,7 @@ class RobotDynamics(object):
         self.kinematic_dict = self._kinematics(root, tip, floating_base)
         
         # Step 2: Extract necessary symbolic variables and parameters from the model
-        params = self.kinematic_dict['parameters']
-        q, q_dot = params[4], params[5]
+        inertial_origins_params, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = self.kinematic_dict['parameters']
         n_joints = self.kinematic_dict['n_joints']
 
         # Step 3: Calculate energy components based on the Lagrangian formulation
@@ -455,7 +463,13 @@ class RobotDynamics(object):
         assert self.C.shape == (n_joints, n_joints), f"Coriolis matrix C has incorrect shape: {self.C.shape}"
         assert self.g.shape == (n_joints, 1), f"Gravity vector g_q has incorrect shape: {self.g_q.shape}"
         
-        return self.kinematic_dict, self.K, self.P, self.L, self.D, self.C, self.g
+        self.qdd = self._build_forward_dynamics(self.D, self.C, q_dot, self.g, tau)
+        assert self.qdd.shape == (n_joints, 1), f"Forward dynamics vector qdd has incorrect shape: {self.qdd.shape}"
+        
+        self.joint_torque = self._build_inverse_dynamics(self.D, self.C, q_dotdot, q_dot, self.g)
+        assert self.joint_torque.shape == (n_joints, 1), f"Inverse dynamics vector qdd has incorrect shape: {self.joint_torque.shape}"
+        
+        return self.kinematic_dict, self.K, self.P, self.L, self.D, self.C, self.g, self.qdd
     
     @property
     @require_built_model
@@ -484,14 +498,14 @@ class RobotDynamics(object):
     @property
     @require_built_model
     def get_inverse_dynamics(self):
-        """Returns the equations of motion for the system."""
+        """Returns the inverse dynamics for the system."""
         raise NotImplementedError("Inverse dynamics calculation not implemented.")
     
     @property
     @require_built_model
     def get_forward_dynamics(self):
-        """Returns the equations of motion for the system."""
-        raise NotImplementedError("Forward dynamics calculation not implemented.")
+        """Returns the forward dynamics for the system."""
+        return self.qdd
 
     @property
     @require_built_model
