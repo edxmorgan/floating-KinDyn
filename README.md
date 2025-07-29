@@ -1,5 +1,5 @@
-# Underwater-Manipulator-dynamics 🦾🌊 
-A library for generating the kinematics and dynamics of electric underwater robotic arm.
+# Manipulator-dynamics 🦾🌊 
+A library for generating the kinematics and dynamics of a robotic arm.
 <!-- ![alt text]() -->
 <img src="./resources/uvman.jpg" width="420"/>
 
