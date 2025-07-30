@@ -1,7 +1,7 @@
 # Manipulator-dynamics 🦾🌊 
 A library for generating the kinematics and dynamics of a robotic arm.
 <!-- ![alt text]() -->
-<img src="./resources/uvman.jpg" width="420"/>
+<img src="./resources/dory.jpg" width="420"/>
 
 ## Todo/Implementation status
 - [ ] [manipulator forward dynamics]()

@@ -1,6 +1,5 @@
 import casadi as ca
-import um_dynamics.utils.transformation_matrix as tm
-import numpy as np
+import system.utils.transformation_matrix as tm
 
 def motion_cross_product(v):
     """Returns the motion cross product matrix of a spatial vector."""

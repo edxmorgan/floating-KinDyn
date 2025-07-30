@@ -5,9 +5,9 @@ import casadi as ca
 import numpy as np
 from platform import machine, system
 from urdf_parser_py.urdf import URDF, Pose
-import um_dynamics.utils.transformation_matrix as Transformation
-import um_dynamics.utils.plucker as plucker
-import um_dynamics.utils.quaternion as quatT
+import system.utils.transformation_matrix as Transformation
+import system.utils.plucker as plucker
+import system.utils.quaternion as quatT
 
 def require_built_model(func):
     """Decorator that ensures the dynamics model has been built."""
@@ -106,7 +106,7 @@ class RobotDynamics(object):
         n_joints = self.get_n_joints(root, tip)
         
         kinematic_dict = self._kinematics(root, tip, floating_base=floating_base)
-        inertial_origins_params, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
+        c_parms, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
         
         internal_fk_eval_euler = ca.Function("internal_fkeval_euler", [q, base_pose, world_pose], [kinematic_dict['Fks'][-1]])
         
@@ -168,7 +168,7 @@ class RobotDynamics(object):
         world_rpy = ca.vertcat(world_phi, world_thet, world_psi)
         world_pose = ca.vertcat(world_xyz, world_rpy)
 
-        i_X_p, tip_offset, inertial_origins_params, m_params, I_b_mats, I_params, vec_g, q, q_dot, q_dotdot, tau = self._model_calculation(root, tip)
+        i_X_p, tip_offset, c_parms, m_params, I_b_mats, I_params, vec_g, q, q_dot, q_dotdot, tau = self._model_calculation(root, tip)
         i_X_0s = [] # transformation of joint i wrt base origin
         icom_X_0s = [] # transformation of center of mass i wrt base origin
         
@@ -184,7 +184,7 @@ class RobotDynamics(object):
                 else:
                     i_X_0 = plucker.spatial_mtimes(i_X_p[i], base_T)
                     
-            i_com_xyz = inertial_origins_params[i]
+            i_com_xyz = c_parms[i]
             com_X_i = plucker.XT(i_com_xyz, [0,0,0])
             
             icom_X_0s.append(plucker.spatial_mtimes(com_X_i, i_X_0))
@@ -196,7 +196,7 @@ class RobotDynamics(object):
         R_symx, Fks, qFks, geo_J, body_J, anlyt_J = self._compute_Fk_and_jacobians(q, i_X_0s)
         com_R_symx, com_Fks, com_qFks, com_geo_J, com_body_J, com_anlyt_J = self._compute_Fk_and_jacobians(q, icom_X_0s)
         
-        dynamic_parameters = [inertial_origins_params, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose]
+        dynamic_parameters = [c_parms, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose]
         
         kinematic_dict = {
             "n_joints": n_joints,
@@ -265,7 +265,7 @@ class RobotDynamics(object):
         m_params = []
         I_tensors = []
         I_params = []
-        inertial_origins_params = []
+        c_parms = []
         for k in range(n_links):
             origin_xyz = ca.SX.sym(f"origin_xyz_{k}", 3)
             m = ca.SX.sym(f"m_{k}")
@@ -281,11 +281,11 @@ class RobotDynamics(object):
                 ca.hcat([Ixy, Iyy, Iyz]),
                 ca.hcat([Ixz, Iyz, Izz])
             )
-            inertial_origins_params.append(origin_xyz)
+            c_parms.append(origin_xyz)
             m_params.append(m)
             I_tensors.append(I_k)
             I_params.extend([Ixx, Iyy, Izz, Ixy, Ixz, Iyz])
-        return inertial_origins_params, m_params, I_tensors, I_params
+        return c_parms, m_params, I_tensors, I_params
 
     def _model_calculation(self, root, tip):
         """Calculates and returns model information needed in the
@@ -300,7 +300,7 @@ class RobotDynamics(object):
         prev_joint = None
         i = 0
         
-        inertial_origins_params, m_params, I_b_mats, I_params = self.links_inertial(n_joints)
+        c_parms, m_params, I_b_mats, I_params = self.links_inertial(n_joints)
         q = ca.SX.sym("q", n_joints)
         q_dot = ca.SX.sym("q_dot", n_joints)
         vec_g = ca.SX.sym("vec_g", 3)  # gravity vector
@@ -360,11 +360,11 @@ class RobotDynamics(object):
                     if joint.type == "fixed":
                         tip_offset = XT_prev
 
-        return i_X_p, tip_offset, inertial_origins_params, m_params, I_b_mats, I_params, vec_g, q, q_dot, q_dotdot, tau
+        return i_X_p, tip_offset, c_parms, m_params, I_b_mats, I_params, vec_g, q, q_dot, q_dotdot, tau
         
     def _kinetic_energy(self, n_joints, kinematic_dict, floating_base=False):
         """Returns the kinetic energy of the system."""
-        inertial_origins_params, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
+        c_parms, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
         D = ca.SX.zeros((n_joints, n_joints))  # D(q) is a symmetric positive definite matrix that is in general configuration dependent. The matrix  is called the inertia matrix.
         K = 0
         for i in range(n_joints):
@@ -379,7 +379,7 @@ class RobotDynamics(object):
 
     def _potential_energy(self, n_joints, kinematic_dict, floating_base=False):
         """Returns the potential energy of the system."""
-        inertial_origins_params, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
+        c_parms, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
         P = 0
         for i in range(n_joints):
             com_Fks = kinematic_dict['com_Fks'][i]
@@ -440,7 +440,7 @@ class RobotDynamics(object):
         self.kinematic_dict = self._kinematics(root, tip, floating_base)
         
         # Step 2: Extract necessary symbolic variables and parameters from the model
-        inertial_origins_params, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = self.kinematic_dict['parameters']
+        c_parms, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = self.kinematic_dict['parameters']
         n_joints = self.kinematic_dict['n_joints']
 
         # Step 3: Calculate energy components based on the Lagrangian formulation
