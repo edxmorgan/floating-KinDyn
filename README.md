@@ -5,11 +5,11 @@ A library for generating the kinematics and dynamics of floating base or fixed b
 
 ## Todo/Implementation status
 - [x] [forward kinematics]()
-- [ ] [Inverse kinematics]()
-- [x] [Workspace Analysis]()
+- [ ] [inverse kinematics]()
+- [x] [workspace Analysis]()
 - [x] [forward dynamics]()
 - [x] [inverse dynamics]()
-- [ ] [GPU acceleration]()
+- [ ] [gpu acceleration]()
 
 For usage examples of Diff_UVMS, see [Jupyter notebook](https://github.com/edxmorgan/underwater-manipulator-dynamics/tree/lagrange-euler/usage).
 
