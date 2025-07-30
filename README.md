@@ -1,4 +1,4 @@
-# Manipulator-dynamics 🦾🌊 
+# manipulator dynamics 🦾
 A library for generating the kinematics and dynamics of floating base or fixed base robotic arm as symbolic expressions for automatic differentiations. 
 <!-- ![alt text]() -->
 <img src="./resources/dory.jpg" width="420"/>
