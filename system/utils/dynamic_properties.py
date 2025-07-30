@@ -1,21 +1,43 @@
 import casadi as ca
+import numpy as np
 
-def is_symmetric(A, tol=1e-9):
-    """Numerical symmetry test."""
-    return float(ca.norm_inf(A - A.T)) < tol        # ‖A‑Aᵀ‖∞ < tol
+def is_symmetric(A, tol=1e-12):
+    return A.size1() == A.size2() and float(ca.norm_inf(A - A.T)) <= tol
 
-def is_spd(A, sym_tol=1e-9, pd_tol=1e-12):
+def is_spd_strict(A, sym_tol=1e-12):
     """
-    Symmetric‑positive‑definite test.
-    1. Symmetrises small numerical noise:   A ← ½(A+Aᵀ)
-    2. Tries a Cholesky factorisation.
+    Test the original matrix A for SPD:
+    - Require near-symmetry (no symmetrisation step)
+    - Cholesky on A (no jitter)
     """
-    A_sym = 0.5*(A + A.T)                         # cheap symmetrisation
-    if not is_symmetric(A_sym, tol=sym_tol):
+    if not is_symmetric(A, sym_tol):
         return False
-
     try:
-        ca.chol(A_sym + pd_tol*ca.DM.eye(A_sym.size1()))  # jitter protects near‑singular
+        ca.chol(A)   # will fail unless A is SPD
         return True
     except RuntimeError:
         return False
+
+def is_spd_sylvester(A, sym_tol=1e-12, det_tol=0.0):
+    if not is_symmetric(A, sym_tol):
+        return False
+    n = A.size1()
+    for k in range(1, n+1):
+        if float(ca.det(A[:k, :k])) <= det_tol:
+            return False
+    return True
+
+def min_eigval(A):
+    M = np.array(A)
+    w = np.linalg.eigvalsh(M) # symmetric eigensolver
+    return float(w.min())
+
+def is_spd_eigs(A, sym_tol=1e-12, eig_tol=0.0):
+    if not is_symmetric(A, sym_tol):
+        return False
+    return min_eigval(A) > eig_tol
+
+def is_skew_symmetric(A, tol=1e-9):
+    """Numerical skew‑symmetry test: ‖A + Aᵀ‖∞ < tol."""
+    return float(ca.norm_inf(A + A.T)) < tol
+

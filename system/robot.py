@@ -390,9 +390,9 @@ class RobotDynamics(object):
 
     def _christoﬀel_symbols_cijk(self, q, D, i, j, k):
         """Returns the christoﬀel_symbols cijk"""
-        dkj_qi = ca.jacobian(D[k, j], q[i])
-        dki_qj = ca.jacobian(D[k, i], q[j])
-        dij_qk = ca.jacobian(D[i, j], q[k])
+        dkj_qi = ca.gradient(D[k, j], q[i])
+        dki_qj = ca.gradient(D[k, i], q[j])
+        dij_qk = ca.gradient(D[i, j], q[k])
         cijk = 0.5 * (dkj_qi + dki_qj - dij_qk)
         return cijk
     
@@ -402,15 +402,43 @@ class RobotDynamics(object):
             for j in range(n_joints):
                 ckj = 0
                 for i in range(n_joints):
-                    qi = q_dot[i]
+                    q_dot_i = q_dot[i]
                     cijk = self._christoﬀel_symbols_cijk(q, D, i, j, k)
-                    ckj += (cijk*qi)
+                    ckj += (cijk*q_dot_i)
                 C[k,j] = ckj
         return C
     
     def _build_gravity_term(self, P, q):
         g_q = ca.gradient(P, q)
         return g_q
+    
+    def _build_D_dot(self, n_joints, q, d_dot, D):
+        D_dot = ca.SX.zeros(n_joints, n_joints)
+        for k in range(n_joints):
+            for j in range(n_joints):
+                d_dot_kj = 0
+                for i in range(n_joints):
+                    qi = q[i]
+                    q_dot_i = d_dot[i]
+                    dkj = D[k,j]
+                    d_dot_kj += ca.gradient(dkj, qi)*q_dot_i
+                D_dot[k,j] = d_dot_kj
+        return D_dot
+          
+    def _build_N(self, n_joints, q, d_dot, D):
+        N = ca.SX.zeros(n_joints, n_joints)
+        for k in range(n_joints):
+            for j in range(n_joints):
+                n_kj = 0
+                for i in range(n_joints):
+                    qk = q[k]
+                    qj = q[j]
+                    dij = D[i,j]
+                    dki = D[k,i]
+                    q_dot_i = d_dot[i]
+                    n_kj += (ca.gradient(dij, qk) - ca.gradient(dki, qj))*q_dot_i
+                N[k,j] = n_kj
+        return N
     
     def _build_forward_dynamics(self, D, C, q_dot, g, tau):
         qdd = ca.inv(D)@(tau - C@q_dot - g)
@@ -454,12 +482,23 @@ class RobotDynamics(object):
         
         # Coriolis matrix is derived from the inertia matrix and joint velocities
         self.C = self._build_coriolis_centrifugal_matrix(n_joints, q, q_dot, self.D)
+        self.D_dot = self._build_D_dot(n_joints, q, q_dot, self.D)
+        self.N = self._build_N(n_joints, q, q_dot, self.D)
+        
+        # total energy of the system
+        self.H = self.K + self.P
+        
+        # total power of the system
+        self.H_dot = q_dot.T@tau
 
         # Step 5: Perform assertions to ensure matrix dimensions are consistent
         assert self.D.shape == (n_joints, n_joints), f"Inertia matrix D has incorrect shape: {self.D.shape}"
         assert self.C.shape == (n_joints, n_joints), f"Coriolis matrix C has incorrect shape: {self.C.shape}"
+        assert self.D_dot.shape == (n_joints, n_joints), f"matrix D_dot has incorrect shape: {self.D_dot.shape}"
+        assert self.N.shape == (n_joints, n_joints), f"matrix N has incorrect shape: {self.N.shape}"
+    
         assert self.g.shape == (n_joints, 1), f"Gravity vector g_q has incorrect shape: {self.g_q.shape}"
-        
+    
         self.qdd = self._build_forward_dynamics(self.D, self.C, q_dot, self.g, tau)
         assert self.qdd.shape == (n_joints, 1), f"Forward dynamics vector qdd has incorrect shape: {self.qdd.shape}"
         
@@ -521,3 +560,27 @@ class RobotDynamics(object):
     def get_gravity_vector(self):
         """Returns the gravity vector of the system."""
         return self.g
+    
+    @property
+    @require_built_model
+    def get_N(self):
+        """Returns the N = D_dot-2C of the system."""
+        return self.N
+
+    @property
+    @require_built_model
+    def get_D_dot_2C(self):
+        """Returns the N = D_dot-2C of the system."""
+        return self.D_dot - 2*self.C
+
+    @property
+    @require_built_model
+    def get_total_energy(self):
+        """Returns the total energy of the system."""
+        return self.H
+  
+    @property
+    @require_built_model
+    def get_total_power(self):
+        """Returns the total power of the system."""
+        return self.H_dot
