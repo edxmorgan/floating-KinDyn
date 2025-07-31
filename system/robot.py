@@ -389,8 +389,8 @@ class RobotDynamics(object):
 
             cross    = Jv_i.T @ Smr_ci @ Jω_i
             D += (m_i@Jv_i.T@Jv_i) + (Jω_i.T @ (Ici + m_i@Sr_ci.T@Sr_ci)@Jω_i) -(cross + cross.T)
+            K += 0.5 * q_dot.T @ D @ q_dot
             
-        K = 0.5 * q_dot.T @ D @ q_dot
         return K , D
 
     def _potential_energy(self, n_joints, kinematic_dict, floating_base=False):
