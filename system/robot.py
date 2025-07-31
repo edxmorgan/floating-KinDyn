@@ -184,8 +184,8 @@ class RobotDynamics(object):
                 else:
                     i_X_0 = plucker.spatial_mtimes(i_X_p[i], base_T)
                     
-            i_com_xyz = c_parms[i]
-            com_X_i = plucker.XT(i_com_xyz, [0,0,0])
+            c_i = c_parms[i]
+            com_X_i = plucker.XT(c_i, [0,0,0])
             
             icom_X_0s.append(plucker.spatial_mtimes(com_X_i, i_X_0))
             i_X_0s.append(i_X_0)  # transformation of joint i wrt base origin
@@ -267,7 +267,7 @@ class RobotDynamics(object):
         I_params = []
         c_parms = []
         for k in range(n_links):
-            origin_xyz = ca.SX.sym(f"origin_xyz_{k}", 3)
+            c_xyz = ca.SX.sym(f"c_{k}", 3)
             m = ca.SX.sym(f"m_{k}")
             Ixx = ca.SX.sym(f"Ixx_{k}")
             Iyy = ca.SX.sym(f"Iyy_{k}")
@@ -281,7 +281,7 @@ class RobotDynamics(object):
                 ca.hcat([Ixy, Iyy, Iyz]),
                 ca.hcat([Ixz, Iyz, Izz])
             )
-            c_parms.append(origin_xyz)
+            c_parms.append(c_xyz)
             m_params.append(m)
             I_tensors.append(I_k)
             I_params.extend([Ixx, Iyy, Izz, Ixy, Ixz, Iyz])
@@ -368,12 +368,28 @@ class RobotDynamics(object):
         D = ca.SX.zeros((n_joints, n_joints))  # D(q) is a symmetric positive definite matrix that is in general configuration dependent. The matrix  is called the inertia matrix.
         K = 0
         for i in range(n_joints):
-            Jv_i = kinematic_dict['com_geo_J'][i][0:3, :]
-            Jω_i = kinematic_dict['com_geo_J'][i][3:6, :]
-            R_i = kinematic_dict['com_R_symx'][i]
-            Ib_mat_i = kinematic_dict['I_b_mats'][i][:, :]
+            Ib_mat_i = kinematic_dict['I_b_mats'][i]
             m_i = m_params[i]
-            D += m_i @ (Jv_i.T @ Jv_i) + Jω_i.T @ R_i @ Ib_mat_i @ R_i.T @ Jω_i
+            R_i      = kinematic_dict['R_symx'][i]      # 3×3 (rotation of link i in world)
+            
+            # Jv_com_i = kinematic_dict['com_geo_J'][i][0:3, :]
+            # Jω_com_i = kinematic_dict['com_geo_J'][i][3:6, :]
+            # R_i = kinematic_dict['com_R_symx'][i]
+            # D += m_i @ (Jv_com_i.T @ Jv_com_i) + Jω_com_i.T @ R_i @ Ib_mat_i @ R_i.T @ Jω_com_i
+            
+            ci = c_parms[i]
+            r_ci = R_i @ ci
+            Sr_ci = ca.skew(r_ci)
+            Smr_ci = ca.skew(m_i@r_ci)
+            
+            Jv_i = kinematic_dict['geo_J'][i][0:3, :]
+            Jω_i = kinematic_dict['geo_J'][i][3:6, :]
+            
+            Ici = R_i @ Ib_mat_i @ R_i.T
+
+            cross    = Jv_i.T @ Smr_ci @ Jω_i
+            D += (m_i@Jv_i.T@Jv_i) + (Jω_i.T @ (Ici + m_i@Sr_ci.T@Sr_ci)@Jω_i) -(cross + cross.T)
+            
         K = 0.5 * q_dot.T @ D @ q_dot
         return K , D
 
@@ -382,10 +398,26 @@ class RobotDynamics(object):
         c_parms, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
         P = 0
         for i in range(n_joints):
-            com_Fks = kinematic_dict['com_Fks'][i]
-            p_ci = com_Fks[0:3]  # Position of the center of mass in world coordinates
             m_i = m_params[i] # Mass of the link
-            P += m_i * vec_g.T @ p_ci
+            
+            # i_com_Fks = kinematic_dict['com_Fks'][i]
+            # p_ci = i_com_Fks[0:3]  # Position of the center of mass of link i in world coordinates
+            # P += m_i * vec_g.T @ p_ci
+            
+            R_i = kinematic_dict['R_symx'][i] # Rotation of the link's frame relative to world
+            c_i = c_parms[i] # center of mass with respect to frame i
+            p_i = kinematic_dict['Fks'][i][0:3]  # Position of joint i in world coordinates
+            
+            # Regressor for m_i (1x1)
+            reg_m_i = vec_g.T @ p_i
+        
+            # Regressor for mc_i = m_i*c_i (1x3)
+            reg_mc_i = vec_g.T @ R_i
+            
+            Y_Pi = ca.horzcat(reg_m_i, reg_mc_i)
+            
+            P += Y_Pi@ca.vertcat(m_i, m_i * c_i)
+            
         return P
 
     def _christoﬀel_symbols_cijk(self, q, D, i, j, k):
