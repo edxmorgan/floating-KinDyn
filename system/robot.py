@@ -361,42 +361,70 @@ class RobotDynamics(object):
                         tip_offset = XT_prev
 
         return i_X_p, tip_offset, c_parms, m_params, I_b_mats, I_params, vec_g, q, q_dot, q_dotdot, tau
-        
-    def _kinetic_energy(self, n_joints, kinematic_dict, floating_base=False):
-        """Returns the kinetic energy of the system."""
+    
+    def _build_sys_id_regressor(self, kinematic_dict):
         c_parms, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
+        n_joints = self.kinematic_dict['n_joints']
         D = ca.SX.zeros((n_joints, n_joints))  # D(q) is a symmetric positive definite matrix that is in general configuration dependent. The matrix  is called the inertia matrix.
         K = 0
+        m_id_list = []
+        m_rci_id_list = []
+        I_id_list = []
         for i in range(n_joints):
-            Ib_mat_i = kinematic_dict['I_b_mats'][i]
-            m_i = m_params[i]
-            R_i      = kinematic_dict['R_symx'][i]      # 3×3 (rotation of link i in world)
             
-            # Jv_com_i = kinematic_dict['com_geo_J'][i][0:3, :]
-            # Jω_com_i = kinematic_dict['com_geo_J'][i][3:6, :]
-            # R_i = kinematic_dict['com_R_symx'][i]
-            # D += m_i @ (Jv_com_i.T @ Jv_com_i) + Jω_com_i.T @ R_i @ Ib_mat_i @ R_i.T @ Jω_com_i
+            m_i_id = ca.SX.sym(f'm_i_{i}')
+            m_rci_id = ca.SX.sym(f'm_r_ci_{i}', 3)
+            I_i_xx_id = ca.SX.sym(f"Ixx_i_{i}")
+            I_i_yy_id = ca.SX.sym(f"Iyy_i_{i}")
+            I_i_zz_id = ca.SX.sym(f"Izz_i_{i}")
+            I_i_xy_id = ca.SX.sym(f"Ixy_i_{i}")
+            I_i_xz_id = ca.SX.sym(f"Ixz_i_{i}")
+            I_i_yz_id = ca.SX.sym(f"Iyz_i_{i}")
+            I_i_id = ca.vertcat(
+                ca.hcat([I_i_xx_id, I_i_xy_id, I_i_xz_id]),
+                ca.hcat([I_i_xy_id, I_i_yy_id, I_i_yz_id]),
+                ca.hcat([I_i_xz_id, I_i_yz_id, I_i_zz_id])
+            )
             
-            ci = c_parms[i]
-            r_ci = R_i @ ci
-            Sr_ci = ca.skew(r_ci)
-            Smr_ci = ca.skew(m_i@r_ci)
+            m_id_list.append(m_i_id)
+            m_rci_id_list.append(m_rci_id)
+            I_id_list.extend([I_i_xx_id, I_i_xy_id, I_i_xz_id, I_i_yy_id, I_i_yz_id, I_i_zz_id])
+            
+            # phi_i = [m_i, m_r_ci, I_i_xx, I_i_xy, I_i_xz, I_i_yy, I_i_yz, I_i_zz]
             
             Jv_i = kinematic_dict['geo_J'][i][0:3, :]
             Jω_i = kinematic_dict['geo_J'][i][3:6, :]
             
-            Ici = R_i @ Ib_mat_i @ R_i.T
-
-            cross    = Jv_i.T @ Smr_ci @ Jω_i
-            D += (m_i@Jv_i.T@Jv_i) + (Jω_i.T @ (Ici + m_i@Sr_ci.T@Sr_ci)@Jω_i) -(cross + cross.T)
-            K += 0.5 * q_dot.T @ D @ q_dot
+            cross    = Jv_i.T @ ca.skew(m_rci_id) @ Jω_i
             
+            D += (m_i_id@Jv_i.T@Jv_i) + (Jω_i.T@I_i_id@Jω_i) - (cross + cross.T)
+        K = 0.5 * q_dot.T @ D @ q_dot
+        return K, D, m_id_list, m_rci_id_list, I_id_list
+            
+    def _kinetic_energy(self, kinematic_dict):
+        """Returns the kinetic energy of the system."""
+        c_parms, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
+        n_joints = self.kinematic_dict['n_joints']
+        D = ca.SX.zeros((n_joints, n_joints))  # D(q) is a symmetric positive definite matrix that is in general configuration dependent. The matrix  is called the inertia matrix.
+        K = 0
+        for i in range(n_joints):
+            m_i = m_params[i]
+            Ib_mat_i = kinematic_dict['I_b_mats'][i]
+            R_i      = kinematic_dict['R_symx'][i]      # 3×3 (rotation of link i in world)
+            
+            Jv_com_i = kinematic_dict['com_geo_J'][i][0:3, :]
+            Jω_com_i = kinematic_dict['com_geo_J'][i][3:6, :]
+            D += m_i @ (Jv_com_i.T @ Jv_com_i) + Jω_com_i.T @ R_i @ Ib_mat_i @ R_i.T @ Jω_com_i
+            
+        K = 0.5 * q_dot.T @ D @ q_dot
+        
         return K , D
 
-    def _potential_energy(self, n_joints, kinematic_dict, floating_base=False):
+    def _potential_energy(self, kinematic_dict):
         """Returns the potential energy of the system."""
         c_parms, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
         P = 0
+        n_joints = self.kinematic_dict['n_joints']
         for i in range(n_joints):
             m_i = m_params[i] # Mass of the link
             
@@ -504,8 +532,8 @@ class RobotDynamics(object):
         n_joints = self.kinematic_dict['n_joints']
 
         # Step 3: Calculate energy components based on the Lagrangian formulation
-        self.K, self.D = self._kinetic_energy(n_joints, self.kinematic_dict, floating_base)
-        self.P = self._potential_energy(n_joints, self.kinematic_dict, floating_base)
+        self.K, self.D = self._kinetic_energy(self.kinematic_dict)
+        self.P = self._potential_energy(self.kinematic_dict)
         self.L = self.K - self.P
 
         # Step 4: Derive the dynamic matrices from the energy components
