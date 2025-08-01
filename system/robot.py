@@ -405,7 +405,7 @@ class RobotDynamics(object):
             
         return K, P, D, m_id_list, m_rci_id_list, I_id_list
     
-    def _lump_sys_id_parameters(self, kinematic_dict):
+    def _sys_id_lump_parameters(self, kinematic_dict):
         c_parms, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
         n_joints = self.kinematic_dict['n_joints']
         I_lump = []
