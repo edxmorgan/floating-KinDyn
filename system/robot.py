@@ -367,6 +367,7 @@ class RobotDynamics(object):
         n_joints = self.kinematic_dict['n_joints']
         D = ca.SX.zeros((n_joints, n_joints))  # D(q) is a symmetric positive definite matrix that is in general configuration dependent. The matrix  is called the inertia matrix.
         K = 0
+        P = 0
         m_id_list = []
         m_rci_id_list = []
         I_id_list = []
@@ -385,21 +386,47 @@ class RobotDynamics(object):
                 ca.hcat([I_i_xy_id, I_i_yy_id, I_i_yz_id]),
                 ca.hcat([I_i_xz_id, I_i_yz_id, I_i_zz_id])
             )
+            Jv_i = kinematic_dict['geo_J'][i][0:3, :]
+            Jω_i = kinematic_dict['geo_J'][i][3:6, :]
+            cross    = Jv_i.T @ ca.skew(m_rci_id) @ Jω_i
+            D_i = (m_i_id@Jv_i.T@Jv_i) + (Jω_i.T@I_i_id@Jω_i) - (cross + cross.T)
+            D += D_i
+            K_i = 0.5 * q_dot.T @D_i@ q_dot
+            K += K_i
+            
+            
+            p_i = kinematic_dict['Fks'][i][0:3]  # Position of joint i in world coordinates
+            Y_Pi = ca.horzcat(vec_g.T @ p_i, vec_g.T)
+            P += Y_Pi@ca.vertcat(m_i_id, m_rci_id)
             
             m_id_list.append(m_i_id)
             m_rci_id_list.append(m_rci_id)
             I_id_list.extend([I_i_xx_id, I_i_xy_id, I_i_xz_id, I_i_yy_id, I_i_yz_id, I_i_zz_id])
             
-            # phi_i = [m_i, m_r_ci, I_i_xx, I_i_xy, I_i_xz, I_i_yy, I_i_yz, I_i_zz]
+        return K, P, D, m_id_list, m_rci_id_list, I_id_list
+    
+    def _lump_sys_id_parameters(self, kinematic_dict):
+        c_parms, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
+        n_joints = self.kinematic_dict['n_joints']
+        I_lump = []
+        mrc_lump = []
+        for i in range(n_joints):
+            m_i = m_params[i]
+            ci = c_parms[i]
+            Ib_mat_i = kinematic_dict['I_b_mats'][i]
+            R_i      = kinematic_dict['R_symx'][i]      # 3×3 (rotation of link i in world)
+            r_ci = R_i @ ci
+            Sr_ci = ca.skew(r_ci)
+            Ici = R_i @ Ib_mat_i @ R_i.T
             
-            Jv_i = kinematic_dict['geo_J'][i][0:3, :]
-            Jω_i = kinematic_dict['geo_J'][i][3:6, :]
+            mrc_lump.append(m_i * r_ci)
             
-            cross    = Jv_i.T @ ca.skew(m_rci_id) @ Jω_i
+            Ici = Ici + m_i@Sr_ci.T@Sr_ci
             
-            D += (m_i_id@Jv_i.T@Jv_i) + (Jω_i.T@I_i_id@Jω_i) - (cross + cross.T)
-        K = 0.5 * q_dot.T @ D @ q_dot
-        return K, D, m_id_list, m_rci_id_list, I_id_list
+            Ici_list = ca.vertcat(Ici[0,0], Ici[1,0], Ici[2,0], Ici[1,1], Ici[2,1], Ici[2,2])
+            
+            I_lump.append(Ici_list)
+        return mrc_lump, I_lump
             
     def _kinetic_energy(self, kinematic_dict):
         """Returns the kinetic energy of the system."""
@@ -427,24 +454,9 @@ class RobotDynamics(object):
         n_joints = self.kinematic_dict['n_joints']
         for i in range(n_joints):
             m_i = m_params[i] # Mass of the link
-            
-            # i_com_Fks = kinematic_dict['com_Fks'][i]
-            # p_ci = i_com_Fks[0:3]  # Position of the center of mass of link i in world coordinates
-            # P += m_i * vec_g.T @ p_ci
-            
-            R_i = kinematic_dict['R_symx'][i] # Rotation of the link's frame relative to world
-            c_i = c_parms[i] # center of mass with respect to frame i
-            p_i = kinematic_dict['Fks'][i][0:3]  # Position of joint i in world coordinates
-            
-            # Regressor for m_i (1x1)
-            reg_m_i = vec_g.T @ p_i
-        
-            # Regressor for mc_i = m_i*c_i (1x3)
-            reg_mc_i = vec_g.T @ R_i
-            
-            Y_Pi = ca.horzcat(reg_m_i, reg_mc_i)
-            
-            P += Y_Pi@ca.vertcat(m_i, m_i * c_i)
+            i_com_Fks = kinematic_dict['com_Fks'][i]
+            p_ci = i_com_Fks[0:3]  # Position of the center of mass of link i in world coordinates
+            P += m_i * vec_g.T @ p_ci
             
         return P
 
