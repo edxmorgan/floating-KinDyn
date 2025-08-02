@@ -9,8 +9,9 @@ A library for generating the kinematics and dynamics of floating base or fixed b
 - [x] [workspace Analysis (sampling-based AABB + point cloud) ]()
 - [x] [forward dynamics]()
 - [x] [inverse dynamics (Lagrange–Euler)]()
-- [x] [Energy and Lagrangian Terms]()
-- [x] [System Identification helpers (energy-based regressors)]()
+- [x] [energy and Lagrangian Terms]()
+- [x] [system Identification helpers (energy-based regressors)]()
+- [ ] [kalman filter]()
 - [x] [jit support]()
 - [ ] [gpu support]()
 
