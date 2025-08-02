@@ -380,7 +380,7 @@ class RobotDynamics(object):
                 ca.hcat([I_i_xx_id, I_i_xy_id, I_i_xz_id]),
                 ca.hcat([I_i_xy_id, I_i_yy_id, I_i_yz_id]),
                 ca.hcat([I_i_xz_id, I_i_yz_id, I_i_zz_id])
-            ) # origin at frame i
+            ) # inertia at center wrt origin at frame i
             
             # define lumped parameters linear in kinetic energy
             Jv_i = kinematic_dict['geo_J'][i][0:3, :]
@@ -390,14 +390,12 @@ class RobotDynamics(object):
             mrc_world = R_i @ m_rci_id
             cross    = Jv_i.T @ ca.skew(mrc_world) @ Jω_i
             
-            I_i_world = R_i @ I_i_id @ R_i.T
+            I_i_world = R_i @ I_i_id @ R_i.T # tranform inertia from frame i to world frame
             D_i = (m_i_id@Jv_i.T@Jv_i) + (Jω_i.T@I_i_world@Jω_i) - (cross + cross.T)
             K_i = 0.5 * q_dot.T @D_i@ q_dot
             
             # define lumped parameters linear in potential energy
             p_i = kinematic_dict['Fks'][i][0:3]  # Position of joint i in world coordinates
-            
-            # Y_Pi = ca.horzcat(vec_g.T @ p_i, vec_g.T)
             
             Y_Pi = ca.horzcat(vec_g.T @ p_i, (R_i.T @ vec_g).T)   # shape (1, 1+3)
             P_i = Y_Pi @ ca.vertcat(m_i_id, m_rci_id)
@@ -479,7 +477,7 @@ class RobotDynamics(object):
             
             Ib_mat_i = kinematic_dict['I_b_mats'][i]
             Sr = ca.skew(c_parms[i])
-            Ibar_link = Ib_mat_i + m_params[i] * (Sr.T @ Sr)   # origin inertia in link frame (lumped like this for id)
+            Ibar_link = Ib_mat_i + m_params[i] * (Sr.T @ Sr)   # com axis inertia in link frame i (lumped like this for id) using parallel axis theorem
             Ici_list = ca.vertcat(Ibar_link[0,0], Ibar_link[0,1], Ibar_link[0,2],
                       Ibar_link[1,1], Ibar_link[1,2], Ibar_link[2,2])
             I_lump.append(Ici_list)
