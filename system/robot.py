@@ -446,8 +446,15 @@ class RobotDynamics(object):
             Ici_list = ca.vertcat(Ici[0,0], Ici[1,0], Ici[2,0], Ici[1,1], Ici[2,1], Ici[2,2])
             I_lump.append(Ici_list)
             
-        return {'':m_params, '':mrc_lump, '':I_lump, '':m_id_list, '':m_rci_id_list, '':I_id_list}
-            
+        return {
+            "masses": m_params,                    # [m_i]
+            "first_moments": mrc_lump,             # [m_i * r_ci] (3-vec per link)
+            "inertias_vec6": I_lump,               # [Ixx, Ixy, Ixz, Iyy, Iyz, Izz] about link i origin
+            "masses_id_syms": m_id_list,           # symbols for m_i
+            "first_moments_id_syms": m_rci_id_list,# symbols for m_i * r_ci (3-vec per link)
+            "inertias_id_syms": I_id_list          # symbols for inertia vec6
+        }
+
     def _kinetic_energy(self, kinematic_dict):
         """Returns the kinetic energy of the system."""
         c_parms, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
