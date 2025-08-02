@@ -362,7 +362,7 @@ class RobotDynamics(object):
 
         return i_X_p, tip_offset, c_parms, m_params, I_b_mats, I_params, vec_g, q, q_dot, q_dotdot, tau
     
-    def _build_sys_id_regressor(self, kinematic_dict):
+    def _build_link_i_regressor(self, kinematic_dict):
         c_parms, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
         n_joints = self.kinematic_dict['n_joints']
         D = ca.SX.zeros((n_joints, n_joints))  # D(q) is a symmetric positive definite matrix that is in general configuration dependent. The matrix  is called the inertia matrix.
@@ -371,8 +371,14 @@ class RobotDynamics(object):
         theta = [] # lumped dynamic parameters
         Beta_K = [] #collection (11 × 1) vectors that allow the Kinetic energy to be written as a function of πi (lumped parameters).
         Beta_P = [] #collection (11 × 1) vectors that allow the Potential energy to be written as a function of πi (lumped parameters).
-        self._sys_id_lump_parameters(kinematic_dict)
-        for i in range(n_joints):
+
+        for i in range(n_joints):            
+            m_i_id = self._sys_id_coeff['masses_id_list'][i]
+            m_rci_id = self._sys_id_coeff['first_moments_id_list'][i]
+            I_id_list = self._sys_id_coeff['inertias_id_list'][i]
+
+            I_i_xx_id, I_i_xy_id, I_i_xz_id, I_i_yy_id, I_i_yz_id, I_i_zz_id = I_id_list
+            
             I_i_id = ca.vertcat(
                 ca.hcat([I_i_xx_id, I_i_xy_id, I_i_xz_id]),
                 ca.hcat([I_i_xy_id, I_i_yy_id, I_i_yz_id]),
@@ -393,14 +399,15 @@ class RobotDynamics(object):
             
             # collect lumped parameters into
             theta_i = [m_i_id, m_rci_id, I_i_xx_id, I_i_xy_id, I_i_xz_id, I_i_yy_id, I_i_yz_id, I_i_zz_id]
+            theta_i_SX = ca.vertcat(*theta_i)
             theta.extend(theta_i)
             
             # compute inertia and energies
-            beta_K_i = ca.jacobian(K_i, theta_i)
-            beta_P_i = ca.jacobian(P_i, theta_i)
+            beta_K_i = ca.jacobian(K_i, theta_i_SX)
+            beta_P_i = ca.jacobian(P_i, theta_i_SX)
             D += D_i
-            K += beta_K_i@theta_i
-            P += beta_P_i@theta_i
+            K += beta_K_i@theta_i_SX  #or += K_i
+            P += beta_P_i@theta_i_SX  #or += P_i
             
             # collect energy regressors
             Beta_K.append(beta_K_i)
@@ -418,21 +425,7 @@ class RobotDynamics(object):
         m_rci_id_list = []
         I_id_list = []
         for i in range(n_joints):
-            
-            # define lumped parameters
-            m_i_id = ca.SX.sym(f'm_i_{i}')
-            m_rci_id = ca.SX.sym(f'm_r_ci_{i}', 3)
-            I_i_xx_id = ca.SX.sym(f"Ixx_i_{i}")
-            I_i_yy_id = ca.SX.sym(f"Iyy_i_{i}")
-            I_i_zz_id = ca.SX.sym(f"Izz_i_{i}")
-            I_i_xy_id = ca.SX.sym(f"Ixy_i_{i}")
-            I_i_xz_id = ca.SX.sym(f"Ixz_i_{i}")
-            I_i_yz_id = ca.SX.sym(f"Iyz_i_{i}")
-
-            m_id_list.append(m_i_id)
-            m_rci_id_list.append(m_rci_id)
-            I_id_list.extend([I_i_xx_id, I_i_xy_id, I_i_xz_id, I_i_yy_id, I_i_yz_id, I_i_zz_id])
-            
+            # define lumped parameters in dynamics model
             m_i = m_params[i]
             ci = c_parms[i]
             Ib_mat_i = kinematic_dict['I_b_mats'][i]
@@ -446,13 +439,32 @@ class RobotDynamics(object):
             Ici_list = ca.vertcat(Ici[0,0], Ici[1,0], Ici[2,0], Ici[1,1], Ici[2,1], Ici[2,2])
             I_lump.append(Ici_list)
             
-        return {
+            # define lumped parameters for system id
+            m_i_id = ca.SX.sym(f'm_i_{i}')
+            m_rci_id = ca.SX.sym(f'm_r_ci_{i}', 3)
+            I_i_xx_id = ca.SX.sym(f"Ixx_lumped_{i}")
+            I_i_yy_id = ca.SX.sym(f"Iyy_lumped_{i}")
+            I_i_zz_id = ca.SX.sym(f"Izz_lumped_{i}")
+            I_i_xy_id = ca.SX.sym(f"Ixy_lumped_{i}")
+            I_i_xz_id = ca.SX.sym(f"Ixz_lumped_{i}")
+            I_i_yz_id = ca.SX.sym(f"Iyz_lumped_{i}")
+
+            m_id_list.append(m_i_id)
+            m_rci_id_list.append(m_rci_id)
+            I_id_list.append([I_i_xx_id, I_i_xy_id, I_i_xz_id, I_i_yy_id, I_i_yz_id, I_i_zz_id])
+            
+        self._sys_id_coeff =  {
             "masses": m_params,                    # [m_i]
             "first_moments": mrc_lump,             # [m_i * r_ci] (3-vec per link)
             "inertias_vec6": I_lump,               # [Ixx, Ixy, Ixz, Iyy, Iyz, Izz] about link i origin
-            "masses_id_syms": m_id_list,           # symbols for m_i
-            "first_moments_id_syms": m_rci_id_list,# symbols for m_i * r_ci (3-vec per link)
-            "inertias_id_syms": I_id_list          # symbols for inertia vec6
+            
+            "masses_id_list": m_id_list,           # symbols for m_i
+            "first_moments_id_list": m_rci_id_list,# symbols for m_i * r_ci (3-vec per link)
+            "inertias_id_list": I_id_list,         # symbols for inertia vec6
+            
+            "masses_id_syms_vertcat": ca.vertcat(*m_id_list),           # symbols for m_i
+            "first_moments_id_vertcat": ca.vertcat(*m_rci_id_list),# symbols for m_i * r_ci (3-vec per link)
+            "inertias_id_vertcat": ca.vertcat(*[s for six in I_id_list for s in six])             # symbols for inertia vec6            
         }
 
     def _kinetic_energy(self, kinematic_dict):
@@ -604,7 +616,9 @@ class RobotDynamics(object):
         self.joint_torque = self._build_inverse_dynamics(self.D, self.C, q_dotdot, q_dot, self.g)
         assert self.joint_torque.shape == (n_joints, 1), f"Inverse dynamics vector qdd has incorrect shape: {self.joint_torque.shape}"
         
-        return self.kinematic_dict, self.K, self.P, self.L, self.D, self.C, self.g, self.qdd, self.joint_torque
+        self._sys_id_lump_parameters(self.kinematic_dict)
+        
+        return self.kinematic_dict, self.K, self.P, self.L, self.D, self.C, self.g, self.qdd, self.joint_torque, self._sys_id_coeff
     
     @property
     @require_built_model
