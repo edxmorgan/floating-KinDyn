@@ -365,13 +365,10 @@ class RobotDynamics(object):
     def _build_link_i_regressor(self, kinematic_dict):
         c_parms, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
         n_joints = self.kinematic_dict['n_joints']
-        D = ca.SX.zeros((n_joints, n_joints))  # D(q) is a symmetric positive definite matrix that is in general configuration dependent. The matrix  is called the inertia matrix.
-        K = 0
-        P = 0
-        theta = [] # lumped dynamic parameters
+        theta_i_list = []
         Beta_K = [] #collection (11 × 1) vectors that allow the Kinetic energy to be written as a function of πi (lumped parameters).
         Beta_P = [] #collection (11 × 1) vectors that allow the Potential energy to be written as a function of πi (lumped parameters).
-
+        D_i_s = []
         for i in range(n_joints):            
             m_i_id = self._sys_id_coeff['masses_id_list'][i]
             m_rci_id = self._sys_id_coeff['first_moments_id_list'][i]
@@ -383,37 +380,87 @@ class RobotDynamics(object):
                 ca.hcat([I_i_xx_id, I_i_xy_id, I_i_xz_id]),
                 ca.hcat([I_i_xy_id, I_i_yy_id, I_i_yz_id]),
                 ca.hcat([I_i_xz_id, I_i_yz_id, I_i_zz_id])
-            )
+            ) # origin at frame i
             
             # define lumped parameters linear in kinetic energy
             Jv_i = kinematic_dict['geo_J'][i][0:3, :]
             Jω_i = kinematic_dict['geo_J'][i][3:6, :]
-            cross    = Jv_i.T @ ca.skew(m_rci_id) @ Jω_i
-            D_i = (m_i_id@Jv_i.T@Jv_i) + (Jω_i.T@I_i_id@Jω_i) - (cross + cross.T)
+            
+            R_i = kinematic_dict['R_symx'][i]
+            mrc_world = R_i @ m_rci_id
+            cross    = Jv_i.T @ ca.skew(mrc_world) @ Jω_i
+            
+            I_i_world = R_i @ I_i_id @ R_i.T
+            D_i = (m_i_id@Jv_i.T@Jv_i) + (Jω_i.T@I_i_world@Jω_i) - (cross + cross.T)
             K_i = 0.5 * q_dot.T @D_i@ q_dot
             
             # define lumped parameters linear in potential energy
             p_i = kinematic_dict['Fks'][i][0:3]  # Position of joint i in world coordinates
-            Y_Pi = ca.horzcat(vec_g.T @ p_i, vec_g.T)
-            P_i = Y_Pi@ca.vertcat(m_i_id, m_rci_id)
             
+            # Y_Pi = ca.horzcat(vec_g.T @ p_i, vec_g.T)
+            
+            Y_Pi = ca.horzcat(vec_g.T @ p_i, (R_i.T @ vec_g).T)   # shape (1, 1+3)
+            P_i = Y_Pi @ ca.vertcat(m_i_id, m_rci_id)
+
             # collect lumped parameters into
             theta_i = [m_i_id, m_rci_id, I_i_xx_id, I_i_xy_id, I_i_xz_id, I_i_yy_id, I_i_yz_id, I_i_zz_id]
             theta_i_SX = ca.vertcat(*theta_i)
-            theta.extend(theta_i)
+            theta_i_list.append(theta_i)
             
             # compute inertia and energies
-            beta_K_i = ca.jacobian(K_i, theta_i_SX)
-            beta_P_i = ca.jacobian(P_i, theta_i_SX)
-            D += D_i
-            K += beta_K_i@theta_i_SX  #or += K_i
-            P += beta_P_i@theta_i_SX  #or += P_i
+            beta_K_i = ca.gradient(K_i, theta_i_SX)
+            beta_P_i = ca.gradient(P_i, theta_i_SX)
             
             # collect energy regressors
             Beta_K.append(beta_K_i)
             Beta_P.append(beta_P_i)
+            D_i_s.append(D_i)
             
-        return K, P, D, Beta_K, Beta_P, theta
+        return D_i_s, Beta_K, Beta_P, theta_i_list
+    
+    def _build_sys_regressor(self, q, q_dot, q_ddot, kinematic_dict):
+        K = 0
+        P = 0
+        theta = []
+        self._sys_id_lump_parameters(self.kinematic_dict)
+        D_i_s, Beta_K, Beta_P, theta_i_list = self._build_link_i_regressor(kinematic_dict)
+        n = q.numel()
+        n_theta = ca.vertcat(*theta_i_list[0]).size1()
+        print(n_theta)
+        Y = ca.SX.zeros(n, n*n_theta)
+        D = ca.SX.zeros(n, n)
+        for i in range(n):
+            theta_i = theta_i_list[i]
+            theta.extend(theta_i)
+            theta_i_SX = ca.vertcat(*theta_i)
+            D += D_i_s[i]
+            K += Beta_K[i].T@theta_i_SX
+            P += Beta_P[i].T@theta_i_SX
+            
+            for j in range(len(theta_i_list)):
+                #Y is block upper triangular, so we only calculate and populate blocks where j >= i.
+                if j >= i:
+                    BTj = Beta_K[j]  # (p_per x 1)
+                    BUj = Beta_P[j]  # (p_per x 1)
+
+                    # ∂β_Tj / ∂ q̇_i  (p_per x 1)
+                    dBTj_dqdi = ca.jacobian(BTj, q_dot[i])
+
+                    # d/dt(∂β_Tj/∂q̇_i) = (∂/∂q)·q̇ + (∂/∂q̇)·q̈
+                    dt_term = ca.jacobian(dBTj_dqdi, q)@q_dot + ca.jacobian(dBTj_dqdi, q_dot)@q_ddot  # (p_per x 1)
+
+                    # − ∂β_Tj/∂q_i + ∂β_uj/∂q_i
+                    minus_q_term = ca.jacobian(BTj, q[i])   # (p_per x 1)
+                    plus_u_term  = ca.jacobian(BUj, q[i])   # (p_per x 1)
+
+                    y_ij = dt_term - minus_q_term + plus_u_term   # (p_per x 1)
+                    start_col = j * n_theta
+                    end_col = (j + 1) * n_theta
+                    Y[i, start_col:end_col] = y_ij.T
+        theta = ca.vertcat(*theta)
+        C = self._build_coriolis_centrifugal_matrix(n, q, q_dot, D)
+        g = self._build_gravity_term(P, q)
+        return D, C, K, P, g, Y, theta
     
     def _sys_id_lump_parameters(self, kinematic_dict):
         c_parms, m_params, I_params, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
@@ -427,16 +474,14 @@ class RobotDynamics(object):
         for i in range(n_joints):
             # define lumped parameters in dynamics model
             m_i = m_params[i]
-            ci = c_parms[i]
-            Ib_mat_i = kinematic_dict['I_b_mats'][i]
-            R_i      = kinematic_dict['R_symx'][i]      # 3×3 (rotation of link i in world)
-            r_ci = R_i @ ci
-            Sr_ci = ca.skew(r_ci)
-            Ici = R_i @ Ib_mat_i @ R_i.T
+            r_ci = c_parms[i]
+            mrc_lump.append(m_i * r_ci) 
             
-            mrc_lump.append(m_i * r_ci)
-            Ici = Ici + m_i@Sr_ci.T@Sr_ci
-            Ici_list = ca.vertcat(Ici[0,0], Ici[1,0], Ici[2,0], Ici[1,1], Ici[2,1], Ici[2,2])
+            Ib_mat_i = kinematic_dict['I_b_mats'][i]
+            Sr = ca.skew(c_parms[i])
+            Ibar_link = Ib_mat_i + m_params[i] * (Sr.T @ Sr)   # origin inertia in link frame (lumped like this for id)
+            Ici_list = ca.vertcat(Ibar_link[0,0], Ibar_link[0,1], Ibar_link[0,2],
+                      Ibar_link[1,1], Ibar_link[1,2], Ibar_link[2,2])
             I_lump.append(Ici_list)
             
             # define lumped parameters for system id
@@ -595,6 +640,7 @@ class RobotDynamics(object):
         self.C = self._build_coriolis_centrifugal_matrix(n_joints, q, q_dot, self.D)
         self.D_dot = self._build_D_dot(n_joints, q, q_dot, self.D)
         self.N = self._build_N(n_joints, q, q_dot, self.D)
+        self.id_D, self.id_C, self.id_K, self.id_P, self.id_g, self.Y, self.id_theta = self._build_sys_regressor(q, q_dot, q_dotdot, self.kinematic_dict)
         
         # total energy of the system
         self.H = self.K + self.P
@@ -615,11 +661,9 @@ class RobotDynamics(object):
         
         self.joint_torque = self._build_inverse_dynamics(self.D, self.C, q_dotdot, q_dot, self.g)
         assert self.joint_torque.shape == (n_joints, 1), f"Inverse dynamics vector qdd has incorrect shape: {self.joint_torque.shape}"
-        
-        self._sys_id_lump_parameters(self.kinematic_dict)
-        
+
         return self.kinematic_dict, self.K, self.P, self.L, self.D, self.C, self.g, self.qdd, self.joint_torque, self._sys_id_coeff
-    
+   
     @property
     @require_built_model
     def get_kinematic_dict(self):
