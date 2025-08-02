@@ -524,9 +524,7 @@ class RobotDynamics(object):
             Jv_com_i = kinematic_dict['com_geo_J'][i][0:3, :]
             Jω_com_i = kinematic_dict['com_geo_J'][i][3:6, :]
             D += m_i @ (Jv_com_i.T @ Jv_com_i) + Jω_com_i.T @ R_i @ Ib_mat_i @ R_i.T @ Jω_com_i
-            
         K = 0.5 * q_dot.T @ D @ q_dot
-        
         return K , D
 
     def _potential_energy(self, kinematic_dict):
@@ -539,7 +537,6 @@ class RobotDynamics(object):
             i_com_Fks = kinematic_dict['com_Fks'][i]
             p_ci = i_com_Fks[0:3]  # Position of the center of mass of link i in world coordinates
             P += m_i * vec_g.T @ p_ci
-            
         return P
 
     def _christoﬀel_symbols_cijk(self, q, D, i, j, k):
