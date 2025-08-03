@@ -435,7 +435,7 @@ class RobotDynamics(object):
             K += Beta_K[i].T@theta_i_SX
             P += Beta_P[i].T@theta_i_SX
             
-            for j in range(len(theta_i_list)):
+            for j in range(n):
                 #Y is block upper triangular, so we only calculate and populate blocks where j >= i.
                 if j >= i:
                     BTj = Beta_K[j]  # (p_per x 1)
