@@ -424,7 +424,6 @@ class RobotDynamics(object):
         D_i_s, Beta_K, Beta_P, theta_i_list = self._build_link_i_regressor(kinematic_dict)
         n = q.numel()
         n_theta = ca.vertcat(*theta_i_list[0]).size1()
-        print(n_theta)
         Y = ca.SX.zeros(n, n*n_theta)
         D = ca.SX.zeros(n, n)
         for i in range(n):
@@ -456,7 +455,7 @@ class RobotDynamics(object):
                     end_col = (j + 1) * n_theta
                     Y[i, start_col:end_col] = y_ij.T
         theta = ca.vertcat(*theta)
-        C = self._build_coriolis_centrifugal_matrix(n, q, q_dot, D)
+        C = self._build_coriolis_centrifugal_matrix(q, q_dot, D)
         g = self._build_gravity_term(P, q)
         return D, C, K, P, g, Y, theta
     
@@ -547,7 +546,8 @@ class RobotDynamics(object):
         cijk = 0.5 * (dkj_qi + dki_qj - dij_qk)
         return cijk
     
-    def _build_coriolis_centrifugal_matrix(self, n_joints, q, q_dot, D):
+    def _build_coriolis_centrifugal_matrix(self, q, q_dot, D):
+        n_joints = q.size1()
         C = ca.SX.zeros(n_joints, n_joints)
         for k in range(n_joints):
             for j in range(n_joints):
@@ -563,7 +563,8 @@ class RobotDynamics(object):
         g_q = ca.gradient(P, q)
         return g_q
     
-    def _build_D_dot(self, n_joints, q, d_dot, D):
+    def _build_D_dot(self, q, d_dot, D):
+        n_joints = q.size1()
         D_dot = ca.SX.zeros(n_joints, n_joints)
         for k in range(n_joints):
             for j in range(n_joints):
@@ -576,7 +577,8 @@ class RobotDynamics(object):
                 D_dot[k,j] = d_dot_kj
         return D_dot
           
-    def _build_N(self, n_joints, q, d_dot, D):
+    def _build_N(self, q, d_dot, D):
+        n_joints = q.size1()
         N = ca.SX.zeros(n_joints, n_joints)
         for k in range(n_joints):
             for j in range(n_joints):
@@ -632,9 +634,9 @@ class RobotDynamics(object):
         self.g = self._build_gravity_term(self.P, q)
         
         # Coriolis matrix is derived from the inertia matrix and joint velocities
-        self.C = self._build_coriolis_centrifugal_matrix(n_joints, q, q_dot, self.D)
-        self.D_dot = self._build_D_dot(n_joints, q, q_dot, self.D)
-        self.N = self._build_N(n_joints, q, q_dot, self.D)
+        self.C = self._build_coriolis_centrifugal_matrix(q, q_dot, self.D)
+        self.D_dot = self._build_D_dot(q, q_dot, self.D)
+        self.N = self._build_N(q, q_dot, self.D)
         self.id_D, self.id_C, self.id_K, self.id_P, self.id_g, self.Y, self.id_theta = self._build_sys_regressor(q, q_dot, q_dotdot, self.kinematic_dict)
         
         # total energy of the system
