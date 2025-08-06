@@ -106,7 +106,7 @@ class RobotDynamics(object):
         n_joints = self.get_n_joints(root, tip)
         
         kinematic_dict = self._kinematics(root, tip, floating_base=floating_base)
-        c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
+        c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
         
         internal_fk_eval_euler = ca.Function("internal_fkeval_euler", [q, base_pose, world_pose], [kinematic_dict['Fks'][-1]])
         
@@ -168,7 +168,7 @@ class RobotDynamics(object):
         world_rpy = ca.vertcat(world_phi, world_thet, world_psi)
         world_pose = ca.vertcat(world_xyz, world_rpy)
 
-        i_X_p, tip_offset, c_parms, m_params, I_b_mats, I_params, fv_coeff, fs_coeff, vec_g, q, q_dot, q_dotdot, tau = self._model_calculation(root, tip)
+        i_X_p, tip_offset, c_parms, m_params, I_b_mats, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p, q, q_dot, q_dotdot, tau = self._model_calculation(root, tip)
         i_X_0s = [] # transformation of joint i wrt base origin
         icom_X_0s = [] # transformation of center of mass i wrt base origin
         
@@ -192,28 +192,35 @@ class RobotDynamics(object):
 
         end_i_X_0 = plucker.spatial_mtimes(tip_offset , i_X_0)
         i_X_0s.append(end_i_X_0)
-        
+
         R_symx, Fks, qFks, geo_J, body_J, anlyt_J = self._compute_Fk_and_jacobians(q, i_X_0s)
         com_R_symx, com_Fks, com_qFks, com_geo_J, com_body_J, com_anlyt_J = self._compute_Fk_and_jacobians(q, icom_X_0s)
         
-        dynamic_parameters = [c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose]
+        dynamic_parameters = [c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose]
         
         kinematic_dict = {
             "n_joints": n_joints,
+            
             "i_X_0s": i_X_0s,
             "icom_X_0s": icom_X_0s,
+            
             "R_symx": R_symx,
             "com_R_symx": com_R_symx,
+            
             "Fks": Fks,
             "com_Fks": com_Fks,
             "qFks": qFks,
             "com_qFks": com_qFks,
+            
             "geo_J": geo_J,
             "com_geo_J": com_geo_J,
+            
             "body_J": body_J,
             "com_body_J": com_body_J,
+            
             "anlyt_J": anlyt_J,
             "com_anlyt_J": com_anlyt_J,
+            
             'I_b_mats': I_b_mats,
             "parameters": dynamic_parameters
         }
@@ -308,6 +315,8 @@ class RobotDynamics(object):
         q_dotdot = ca.SX.sym("q_dotdot", n_joints) # joint accelerations
         fv_coeff = ca.SX.sym('Fv', n_joints)
         fs_coeff = ca.SX.sym('Fs', n_joints)
+        r_com_body = ca.SX.sym("r_com_body", 3)  # 3x1, COM in tool (end-effector) frame
+        m_p = ca.SX.sym("m_p") # payload mass
         
         for item in chain:
             if item in self.robot_desc.joint_map:
@@ -362,10 +371,10 @@ class RobotDynamics(object):
                     if joint.type == "fixed":
                         tip_offset = XT_prev
 
-        return i_X_p, tip_offset, c_parms, m_params, I_b_mats, I_params, fv_coeff, fs_coeff, vec_g, q, q_dot, q_dotdot, tau
+        return i_X_p, tip_offset, c_parms, m_params, I_b_mats, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p, q, q_dot, q_dotdot, tau
 
     def _sys_id_lump_parameters(self, kinematic_dict):
-        c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
+        c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = kinematic_dict['parameters']
         n_joints = self.kinematic_dict['n_joints']
         I_lump = []
         mrc_lump = []
@@ -426,8 +435,8 @@ class RobotDynamics(object):
             "fs_id_vertcat": ca.vertcat(*fs_list),   
         }
         
-    def _build_link_i_regressor(self, kinematic_dict):
-        c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
+    def _build_link_i_regressor(self):
+        c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
         n_joints = self.kinematic_dict['n_joints']
         theta_i_list = []
         Beta_K = [] #collection (11 × 1) vectors that allow the Kinetic energy to be written as a function of πi (lumped parameters).
@@ -449,10 +458,10 @@ class RobotDynamics(object):
             ) # inertia at center wrt origin at frame i
             
             # define lumped parameters linear in kinetic energy
-            Jv_i = kinematic_dict['geo_J'][i][0:3, :]
-            Jω_i = kinematic_dict['geo_J'][i][3:6, :]
+            Jv_i = self.kinematic_dict['geo_J'][i][0:3, :]
+            Jω_i = self.kinematic_dict['geo_J'][i][3:6, :]
             
-            R_i = kinematic_dict['R_symx'][i]
+            R_i = self.kinematic_dict['R_symx'][i]
             mrc_world = R_i @ m_rci_id
             cross    = Jv_i.T @ ca.skew(mrc_world) @ Jω_i
             
@@ -461,7 +470,7 @@ class RobotDynamics(object):
             K_i = 0.5 * q_dot.T @D_i@ q_dot
             
             # define lumped parameters linear in potential energy
-            p_i = kinematic_dict['Fks'][i][0:3]  # Position of joint i in world coordinates
+            p_i = self.kinematic_dict['Fks'][i][0:3]  # Position of joint i in world coordinates
             
             Y_Pi = ca.horzcat(vec_g.T @ p_i, (R_i.T @ vec_g).T)   # shape (1, 1+3)
             P_i = Y_Pi @ ca.vertcat(m_i_id, m_rci_id)
@@ -482,12 +491,12 @@ class RobotDynamics(object):
             
         return D_i_s, Beta_K, Beta_P, theta_i_list
     
-    def _build_sys_regressor(self, q, q_dot, q_ddot, kinematic_dict):
+    def _build_sys_regressor(self, q, q_dot, q_ddot):
         K = 0
         P = 0
         theta = []
         self._sys_id_lump_parameters(self.kinematic_dict)
-        D_i_s, Beta_K, Beta_P, theta_i_list = self._build_link_i_regressor(kinematic_dict)
+        D_i_s, Beta_K, Beta_P, theta_i_list = self._build_link_i_regressor()
         n = q.numel()
         
         theta_sizes = [int((ca.vertcat(*t)).size1()) for t in theta_i_list]
@@ -538,31 +547,31 @@ class RobotDynamics(object):
         theta = ca.vertcat(*theta)
         return D, C, K, P, g, Y, theta
 
-    def _kinetic_energy(self, kinematic_dict):
+    def _kinetic_energy(self):
         """Returns the kinetic energy of the system."""
-        c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
+        c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p, q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
         n_joints = self.kinematic_dict['n_joints']
         D = ca.SX.zeros((n_joints, n_joints))  # D(q) is a symmetric positive definite matrix that is in general configuration dependent. The matrix  is called the inertia matrix.
         K = 0
         for i in range(n_joints):
             m_i = m_params[i]
-            Ib_mat_i = kinematic_dict['I_b_mats'][i]
-            R_i      = kinematic_dict['R_symx'][i]      # 3×3 (rotation of link i in world)
+            Ib_mat_i = self.kinematic_dict['I_b_mats'][i]
+            R_i      = self.kinematic_dict['R_symx'][i]      # 3×3 (rotation of link i in world)
             
-            Jv_com_i = kinematic_dict['com_geo_J'][i][0:3, :]
-            Jω_com_i = kinematic_dict['com_geo_J'][i][3:6, :]
+            Jv_com_i = self.kinematic_dict['com_geo_J'][i][0:3, :]
+            Jω_com_i = self.kinematic_dict['com_geo_J'][i][3:6, :]
             D += m_i @ (Jv_com_i.T @ Jv_com_i) + Jω_com_i.T @ R_i @ Ib_mat_i @ R_i.T @ Jω_com_i
         K = 0.5 * q_dot.T @ D @ q_dot
         return K , D
 
-    def _potential_energy(self, kinematic_dict):
+    def _potential_energy(self):
         """Returns the potential energy of the system."""
-        c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
+        c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
         P = 0
         n_joints = self.kinematic_dict['n_joints']
         for i in range(n_joints):
             m_i = m_params[i] # Mass of the link
-            i_com_Fks = kinematic_dict['com_Fks'][i]
+            i_com_Fks = self.kinematic_dict['com_Fks'][i]
             p_ci = i_com_Fks[0:3]  # Position of the center of mass of link i in world coordinates
             P += m_i * vec_g.T @ p_ci
         return P
@@ -627,14 +636,26 @@ class RobotDynamics(object):
                     n_kj += (ca.gradient(dij, qk) - ca.gradient(dki, qj))*q_dot_i
                 N[k,j] = n_kj
         return N
-    
-    def _build_forward_dynamics(self, D, C, q_dot, g, B, tau):
-        tau_hat =  C@q_dot + g + B
+
+    def _payload_wrench_from_mass(self, m_p, r_com_body):
+        # r_com_body: 3x1, COM in tool (end-effector) frame
+        # Uses last link rotation to world and gravity vec_g from parameters.
+        R_e = self.kinematic_dict["R_symx"][-1]    # 3x3, tool->world
+        _, _, _, _, _, vec_g, *_ = self.kinematic_dict['parameters']
+        f = m_p * vec_g                             # 3x1, world force
+        r_w = R_e @ r_com_body                      # 3x1, COM in world
+        tau = ca.cross(r_w, f)                      # 3x1, moment at tool origin
+        return ca.vertcat(tau, f)                   # 6x1
+
+    def _build_forward_dynamics(self, D, C, q_dot, g, B, tau, J_tip, F_payload):
+        tau_payload = J_tip.T @ F_payload          # n×1
+        tau_hat =  C@q_dot + g + B + tau_payload
         qdd = ca.inv(D)@(tau - tau_hat)
         return qdd
 
-    def _build_inverse_dynamics(self, D, C, q_dotdot, q_dot, g, B):
-        joint_torque = D@q_dotdot + C@q_dot + g + B
+    def _build_inverse_dynamics(self, D, C, q_dotdot, q_dot, g, B, J_tip, F_payload):
+        tau_payload = J_tip.T @ F_payload
+        joint_torque = D@q_dotdot + C@q_dot + g + B + tau_payload
         return joint_torque
 
     def build_model(self, root, tip, floating_base=False):
@@ -657,12 +678,12 @@ class RobotDynamics(object):
         self.kinematic_dict = self._kinematics(root, tip, floating_base)
         
         # Step 2: Extract necessary symbolic variables and parameters from the model
-        c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
+        c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
         n_joints = self.kinematic_dict['n_joints']
 
         # Step 3: Calculate energy components based on the Lagrangian formulation
-        self.K, self.D = self._kinetic_energy(self.kinematic_dict)
-        self.P = self._potential_energy(self.kinematic_dict)
+        self.K, self.D = self._kinetic_energy()
+        self.P = self._potential_energy()
         self.L = self.K - self.P
 
         # Step 4: Derive the dynamic matrices from the energy components
@@ -676,11 +697,9 @@ class RobotDynamics(object):
         self.C = self._build_coriolis_centrifugal_matrix(q, q_dot, self.D)
         self.D_dot = self._build_D_dot(q, q_dot, self.D)
         self.N = self._build_N(q, q_dot, self.D)
-        self.id_D, self.id_C, self.id_K, self.id_P, self.id_g, self.Y, self.id_theta = self._build_sys_regressor(q, q_dot, q_dotdot, self.kinematic_dict)
-        
+        self.id_D, self.id_C, self.id_K, self.id_P, self.id_g, self.Y, self.id_theta = self._build_sys_regressor(q, q_dot, q_dotdot)
         # total energy of the system
         self.H = self.K + self.P
-        
         # total power of the system
         self.H_dot = q_dot.T@tau
 
@@ -689,16 +708,17 @@ class RobotDynamics(object):
         assert self.C.shape == (n_joints, n_joints), f"Coriolis matrix C has incorrect shape: {self.C.shape}"
         assert self.D_dot.shape == (n_joints, n_joints), f"matrix D_dot has incorrect shape: {self.D_dot.shape}"
         assert self.N.shape == (n_joints, n_joints), f"matrix N has incorrect shape: {self.N.shape}"
-    
         assert self.g.shape == (n_joints, 1), f"Gravity vector g_q has incorrect shape: {self.g_q.shape}"
-    
-        self.qdd = self._build_forward_dynamics(self.D, self.C, q_dot, self.g, self.B, tau)
+        
+        F_payload = self._payload_wrench_from_mass( m_p, r_com_body)
+        J_tip = self.kinematic_dict["geo_J"][-1]   # 6×n geometric Jacobian at the tool
+        self.qdd = self._build_forward_dynamics(self.D, self.C, q_dot, self.g, self.B, tau, J_tip, F_payload)
         assert self.qdd.shape == (n_joints, 1), f"Forward dynamics vector qdd has incorrect shape: {self.qdd.shape}"
         
-        self.joint_torque = self._build_inverse_dynamics(self.D, self.C, q_dotdot, q_dot, self.g, self.B)
+        self.joint_torque = self._build_inverse_dynamics(self.D, self.C, q_dotdot, q_dot, self.g, self.B, J_tip, F_payload)
         assert self.joint_torque.shape == (n_joints, 1), f"Inverse dynamics vector qdd has incorrect shape: {self.joint_torque.shape}"
 
-        return self.kinematic_dict, self.K, self.P, self.L, self.D, self.C, self.g, self.B, self.qdd, self.joint_torque, self._sys_id_coeff
+        return self.kinematic_dict, self.K, self.P, self.L, self.D, self.C, self.g, self.B, self.qdd, self.joint_torque, self._sys_id_coeff, F_payload
    
     @property
     @require_built_model
@@ -756,7 +776,7 @@ class RobotDynamics(object):
     
     @property
     @require_built_model
-    def get_friction_vection(self):
+    def get_friction_vector(self):
         """Returns the friction vector of the system."""
         return self.B
     
