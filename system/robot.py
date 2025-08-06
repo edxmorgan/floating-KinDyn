@@ -397,14 +397,14 @@ class RobotDynamics(object):
             I_i_xy_id = ca.SX.sym(f"Ixy_lumped_{i}")
             I_i_xz_id = ca.SX.sym(f"Ixz_lumped_{i}")
             I_i_yz_id = ca.SX.sym(f"Iyz_lumped_{i}")
-            fs_id = ca.SX.sym(f"fs_{i}")
-            fv_id = ca.SX.sym(f"fv_{i}")
+            fs_i_id = ca.SX.sym(f"fs_{i}")
+            fv_i_id = ca.SX.sym(f"fv_{i}")
 
             m_id_list.append(m_i_id)
             m_rci_id_list.append(m_rci_id)
             I_id_list.append([I_i_xx_id, I_i_xy_id, I_i_xz_id, I_i_yy_id, I_i_yz_id, I_i_zz_id])
-            fs_list.append(fs_id)
-            fv_list.append(fv_id)
+            fs_list.append(fs_i_id)
+            fv_list.append(fv_i_id)
             
         self._sys_id_coeff =  {
             "masses": m_params,                    # [m_i]
@@ -416,14 +416,14 @@ class RobotDynamics(object):
             "masses_id_list": m_id_list,           # symbols for m_i
             "first_moments_id_list": m_rci_id_list,# symbols for m_i * r_ci (3-vec per link)
             "inertias_id_list": I_id_list,         # symbols for inertia vec6
-            "fs_list": fs_list,
             "fv_list": fv_list,
+            "fs_list": fs_list,
             
             "masses_id_syms_vertcat": ca.vertcat(*m_id_list),           # symbols for m_i
             "first_moments_id_vertcat": ca.vertcat(*m_rci_id_list),# symbols for m_i * r_ci (3-vec per link)
             "inertias_id_vertcat": ca.vertcat(*[s for six in I_id_list for s in six]),             # symbols for inertia vec6
-            "fs_id_vertcat": ca.vertcat(*fs_list),
-            "fv_id_vertcat": ca.vertcat(*fv_list),    
+            "fv_id_vertcat": ca.vertcat(*fv_list),
+            "fs_id_vertcat": ca.vertcat(*fs_list),   
         }
         
     def _build_link_i_regressor(self, kinematic_dict):
@@ -437,6 +437,8 @@ class RobotDynamics(object):
             m_i_id = self._sys_id_coeff['masses_id_list'][i]
             m_rci_id = self._sys_id_coeff['first_moments_id_list'][i]
             I_id_list = self._sys_id_coeff['inertias_id_list'][i]
+            fv_i_id = self._sys_id_coeff["fv_list"][i]
+            fs_i_id = self._sys_id_coeff["fs_list"][i]
 
             I_i_xx_id, I_i_xy_id, I_i_xz_id, I_i_yy_id, I_i_yz_id, I_i_zz_id = I_id_list
             
@@ -465,13 +467,13 @@ class RobotDynamics(object):
             P_i = Y_Pi @ ca.vertcat(m_i_id, m_rci_id)
 
             # collect lumped parameters into
-            theta_i = [m_i_id, m_rci_id, I_i_xx_id, I_i_xy_id, I_i_xz_id, I_i_yy_id, I_i_yz_id, I_i_zz_id]
+            theta_i = [m_i_id, m_rci_id, I_i_xx_id, I_i_xy_id, I_i_xz_id, I_i_yy_id, I_i_yz_id, I_i_zz_id, fv_i_id, fs_i_id]
             theta_i_SX = ca.vertcat(*theta_i)
             theta_i_list.append(theta_i)
-            
+ 
             # compute inertia and energies
-            beta_K_i = ca.gradient(K_i, theta_i_SX)
-            beta_P_i = ca.gradient(P_i, theta_i_SX)
+            beta_K_i = ca.gradient(K_i, theta_i_SX[0:10])
+            beta_P_i = ca.gradient(P_i, theta_i_SX[0:10])
             
             # collect energy regressors
             Beta_K.append(beta_K_i)
@@ -487,16 +489,21 @@ class RobotDynamics(object):
         self._sys_id_lump_parameters(self.kinematic_dict)
         D_i_s, Beta_K, Beta_P, theta_i_list = self._build_link_i_regressor(kinematic_dict)
         n = q.numel()
-        n_theta = ca.vertcat(*theta_i_list[0]).size1()
+        
+        theta_sizes = [int((ca.vertcat(*t)).size1()) for t in theta_i_list]
+        assert len(set(theta_sizes)) == 1, f"Inconsistent theta sizes: {theta_sizes}"
+        n_theta = theta_sizes[0]
+        
         Y = ca.SX.zeros(n, n*n_theta)
         D = ca.SX.zeros(n, n)
         for i in range(n):
             theta_i = theta_i_list[i]
             theta.extend(theta_i)
+            
             theta_i_SX = ca.vertcat(*theta_i)
             D += D_i_s[i]
-            K += Beta_K[i].T@theta_i_SX
-            P += Beta_P[i].T@theta_i_SX
+            K += Beta_K[i].T@theta_i_SX[0:10]
+            P += Beta_P[i].T@theta_i_SX[0:10]
             
             for j in range(n):
                 #Y is block upper triangular, so we only calculate and populate blocks where j >= i.
@@ -515,26 +522,19 @@ class RobotDynamics(object):
                     plus_u_term  = ca.jacobian(BUj, q[i])   # (p_per x 1)
 
                     y_ij = dt_term - minus_q_term + plus_u_term   # (p_per x 1)
+                    
+                    # friction only on the joint's own block
+                    fric_Y = ca.vertcat(q_dot[i], ca.sign(q_dot[i])) if j == i else ca.SX.zeros(2,1)
+                    
+                    y_ij_b = ca.vertcat(y_ij, fric_Y)  # length n_theta (=10+2)
+                    
                     start_col = j * n_theta
                     end_col = (j + 1) * n_theta
-                    Y[i, start_col:end_col] = y_ij.T
+                    Y[i, start_col:end_col] = y_ij_b.T
+                    
         C = self._build_coriolis_centrifugal_matrix(q, q_dot, D)
         g = self._build_gravity_term(P, q)
         
-        fv_vert = self._sys_id_coeff["fv_id_vertcat"]
-        fs_vert = self._sys_id_coeff["fs_id_vertcat"]
-        b_coeff = ca.vertcat(fv_vert, fs_vert)
-        
-
-        B = self._build_friction_term(fv_vert, fs_vert, q_dot)
-        Y_B = ca.jacobian(B, b_coeff)
-        Y = ca.horzcat(Y, Y_B)
-                
-        fv_list = self._sys_id_coeff["fv_list"]
-        fs_list = self._sys_id_coeff["fs_list"]
-        #add friction coefficients to parameters
-        theta.extend(fv_list) 
-        theta.extend(fs_list)
         theta = ca.vertcat(*theta)
         return D, C, K, P, g, Y, theta
 
