@@ -373,8 +373,8 @@ class RobotDynamics(object):
 
         return i_X_p, tip_offset, c_parms, m_params, I_b_mats, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p, q, q_dot, q_dotdot, tau
 
-    def _sys_id_lump_parameters(self, kinematic_dict):
-        c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = kinematic_dict['parameters']
+    def _sys_id_lump_parameters(self):
+        c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
         n_joints = self.kinematic_dict['n_joints']
         I_lump = []
         mrc_lump = []
@@ -390,7 +390,7 @@ class RobotDynamics(object):
             r_ci = c_parms[i]
             mrc_lump.append(m_i * r_ci) 
             
-            Ib_mat_i = kinematic_dict['I_b_mats'][i]
+            Ib_mat_i = self.kinematic_dict['I_b_mats'][i]
             Sr = ca.skew(c_parms[i])
             Ibar_link = Ib_mat_i + m_params[i] * (Sr.T @ Sr)   # com axis inertia in link frame i (lumped like this for id) using parallel axis theorem
             Ici_list = ca.vertcat(Ibar_link[0,0], Ibar_link[0,1], Ibar_link[0,2],
@@ -466,7 +466,7 @@ class RobotDynamics(object):
             cross    = Jv_i.T @ ca.skew(mrc_world) @ Jω_i
             
             I_i_world = R_i @ I_i_id @ R_i.T # tranform inertia from frame i to world frame
-            D_i = (m_i_id@Jv_i.T@Jv_i) + (Jω_i.T@I_i_world@Jω_i) - (cross + cross.T)
+            D_i = m_i_id * (Jv_i.T @ Jv_i) + (Jω_i.T@I_i_world@Jω_i) - (cross + cross.T)
             K_i = 0.5 * q_dot.T @D_i@ q_dot
             
             # define lumped parameters linear in potential energy
@@ -495,7 +495,7 @@ class RobotDynamics(object):
         K = 0
         P = 0
         theta = []
-        self._sys_id_lump_parameters(self.kinematic_dict)
+        self._sys_id_lump_parameters()
         D_i_s, Beta_K, Beta_P, theta_i_list = self._build_link_i_regressor()
         n = q.numel()
         
@@ -608,7 +608,7 @@ class RobotDynamics(object):
         friction = viscous_friction + column_friction
         return friction
     
-    def _build_D_dot(self, q, d_dot, D):
+    def _build_D_dot(self, q, q_dot, D):
         n_joints = q.size1()
         D_dot = ca.SX.zeros(n_joints, n_joints)
         for k in range(n_joints):
@@ -616,7 +616,7 @@ class RobotDynamics(object):
                 d_dot_kj = 0
                 for i in range(n_joints):
                     qi = q[i]
-                    q_dot_i = d_dot[i]
+                    q_dot_i = q_dot[i]
                     dkj = D[k,j]
                     d_dot_kj += ca.gradient(dkj, qi)*q_dot_i
                 D_dot[k,j] = d_dot_kj
@@ -701,7 +701,7 @@ class RobotDynamics(object):
         self.id_D, self.id_C, self.id_K, self.id_P, self.id_g, self.Y, self.id_theta = self._build_sys_regressor(q, q_dot, q_dotdot)
         # total energy of the system
         self.H = self.K + self.P
-        # total power of the system
+        # input. power of the system
         self.H_dot = q_dot.T@tau
 
         # Step 5: Perform assertions to ensure matrix dimensions are consistent
@@ -709,7 +709,7 @@ class RobotDynamics(object):
         assert self.C.shape == (n_joints, n_joints), f"Coriolis matrix C has incorrect shape: {self.C.shape}"
         assert self.D_dot.shape == (n_joints, n_joints), f"matrix D_dot has incorrect shape: {self.D_dot.shape}"
         assert self.N.shape == (n_joints, n_joints), f"matrix N has incorrect shape: {self.N.shape}"
-        assert self.g.shape == (n_joints, 1), f"Gravity vector g_q has incorrect shape: {self.g_q.shape}"
+        assert self.g.shape == (n_joints, 1), f"Gravity vector g has incorrect shape: {self.g.shape}"
         
         F_payload = self._payload_wrench_from_mass( m_p, r_com_body)
         J_tip = self.kinematic_dict["geo_J"][-1]   # 6×n geometric Jacobian at the tool
@@ -802,7 +802,7 @@ class RobotDynamics(object):
     @property
     @require_built_model
     def get_total_power(self):
-        """Returns the total power of the system."""
+        """Returns the input power of the system."""
         return self.H_dot
     
     # not sure. research into this and resolve
@@ -859,9 +859,9 @@ class RobotDynamics(object):
 
             # Calculate linear and angular acceleration of the CoM using jtimes for J_dot * q_dot
             # a_ci = Jv * q_ddot + Jv_dot * q_dot
-            a_ci = Jv_ci @ q_ddot + ca.jtimes(Jv_ci, q, q_dot)
+            a_ci = Jv_ci @ q_ddot + ca.jtimes(Jv_ci, q, q_dot)@q_dot
             # alpha_i = Jomega * q_ddot + Jomega_dot * q_dot
-            alpha_i = Jomega_i @ q_ddot + ca.jtimes(Jomega_i, q, q_dot)
+            alpha_i = Jomega_i @ q_ddot + ca.jtimes(Jomega_i, q, q_dot)@q_dot
             
             # Angular velocity of the link
             omega_i = Jomega_i @ q_dot
@@ -898,12 +898,4 @@ class RobotDynamics(object):
         # Combine into the final base wrench vector
         base_wrench = ca.vertcat(base_torque, base_force)
 
-        # Create and return the CasADi function
-        wrench_func = ca.Function(
-            'base_wrench',
-            [q, q_dot, q_ddot, F_ext, vec_g],
-            [base_wrench],
-            ['q', 'q_dot', 'q_ddot', 'F_ext', 'g'],
-            ['wrench']
-        )
-        return wrench_func
+        return base_wrench
