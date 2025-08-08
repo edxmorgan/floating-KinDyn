@@ -434,7 +434,36 @@ class RobotDynamics(object):
             "fv_id_vertcat": ca.vertcat(*fv_list),
             "fs_id_vertcat": ca.vertcat(*fs_list),   
         }
-        
+
+
+    def _pseudo_inertia(self, m, mc, I_bar):
+        """
+        Construct the 4×4 pseudo-inertia (spatial inertia) matrix.
+
+        Args
+        ----
+        m      : mass (scalar SX)
+        c      : 3×1 centre‐of‐mass vector (SX)
+        I_bar  : 3×3 inertia tensor about the same origin as `c` (SX)
+
+        Returns
+        -------
+        J : 4×4 SX matrix.  J ≽ 0  ⇔  physically consistent parameters.
+        """
+        # upper-left 3×3 block
+        J_ul = 0.5 * ca.trace(I_bar) * ca.SX.eye(3) - I_bar
+        # cross blocks
+        J_ur = mc
+        J_ll = mc.T
+        # bottom-right scalar block
+        J_br = m
+
+        J = ca.vertcat(
+                ca.hcat([J_ul, J_ur]),
+                ca.hcat([J_ll, J_br])
+            )
+        return J
+    
     def _build_link_i_regressor(self):
         c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
         n_joints = self.kinematic_dict['n_joints']
@@ -475,6 +504,7 @@ class RobotDynamics(object):
             Y_Pi = ca.horzcat(vec_g.T @ p_i, (R_i.T @ vec_g).T)   # shape (1, 1+3)
             P_i = Y_Pi @ ca.vertcat(m_i_id, m_rci_id)
 
+            # self._pseudo_inertia(m_i_id, m_rci_id, I_i_id)
             # collect lumped parameters into
             theta_i = [m_i_id, m_rci_id, I_i_xx_id, I_i_xy_id, I_i_xz_id, I_i_yy_id, I_i_yz_id, I_i_zz_id, fv_i_id, fs_i_id]
             theta_i_SX = ca.vertcat(*theta_i)
