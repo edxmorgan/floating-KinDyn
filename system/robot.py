@@ -471,6 +471,7 @@ class RobotDynamics(object):
         Beta_K = [] #collection (11 × 1) vectors that allow the Kinetic energy to be written as a function of πi (lumped parameters).
         Beta_P = [] #collection (11 × 1) vectors that allow the Potential energy to be written as a function of πi (lumped parameters).
         D_i_s = []
+        physical_plausibility_matrices = []
         for i in range(n_joints):            
             m_i_id = self._sys_id_coeff['masses_id_list'][i]
             m_rci_id = self._sys_id_coeff['first_moments_id_list'][i]
@@ -504,7 +505,8 @@ class RobotDynamics(object):
             Y_Pi = ca.horzcat(vec_g.T @ p_i, (R_i.T @ vec_g).T)   # shape (1, 1+3)
             P_i = Y_Pi @ ca.vertcat(m_i_id, m_rci_id)
 
-            self._pseudo_inertia(m_i_id, m_rci_id, I_i_id)
+            physical_plausibility_matrix = self._pseudo_inertia(m_i_id, m_rci_id, I_i_id)
+            physical_plausibility_matrices.append(physical_plausibility_matrix)
             # collect lumped parameters into
             theta_i = [m_i_id, m_rci_id, I_i_xx_id, I_i_yy_id, I_i_zz_id, I_i_xy_id, I_i_xz_id, I_i_yz_id, fv_i_id, fs_i_id]
             theta_i_SX = ca.vertcat(*theta_i)
@@ -519,14 +521,14 @@ class RobotDynamics(object):
             Beta_P.append(beta_P_i)
             D_i_s.append(D_i)
             
-        return D_i_s, Beta_K, Beta_P, theta_i_list
+        return D_i_s, Beta_K, Beta_P, theta_i_list, physical_plausibility_matrices
     
     def _build_sys_regressor(self, q, q_dot, q_ddot):
         K = 0
         P = 0
         theta = []
         self._sys_id_lump_parameters()
-        D_i_s, Beta_K, Beta_P, theta_i_list = self._build_link_i_regressor()
+        D_i_s, Beta_K, Beta_P, theta_i_list, physical_plausibility_matrices = self._build_link_i_regressor()
         n = q.numel()
         
         theta_sizes = [int((ca.vertcat(*t)).size1()) for t in theta_i_list]
@@ -576,7 +578,7 @@ class RobotDynamics(object):
         g = self._build_gravity_term(P, q)
         
         theta = ca.vertcat(*theta)
-        return D, C, K, P, g, Y, theta
+        return D, C, K, P, g, Y, theta, physical_plausibility_matrices
 
     def _kinetic_energy(self):
         """Returns the kinetic energy of the system."""
@@ -814,7 +816,7 @@ class RobotDynamics(object):
         self.C = self._build_coriolis_centrifugal_matrix(q, q_dot, self.D)
         self.D_dot = self._build_D_dot(q, q_dot, self.D)
         self.N = self._build_N(q, q_dot, self.D)
-        self.id_D, self.id_C, self.id_K, self.id_P, self.id_g, self.Y, self.id_theta = self._build_sys_regressor(q, q_dot, q_dotdot)
+        self.id_D, self.id_C, self.id_K, self.id_P, self.id_g, self.Y, self.id_theta, self.physical_plausibility_matrices = self._build_sys_regressor(q, q_dot, q_dotdot)
         # total energy of the system
         self.H = self.K + self.P
         # input. power of the system
