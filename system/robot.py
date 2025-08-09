@@ -303,7 +303,7 @@ class RobotDynamics(object):
         n_joints = self.get_n_joints(root, tip)
         chain = self.robot_desc.get_chain(root, tip)
         i_X_p = []   # collect transforms from child link origin to parent link origin
-        tip_offset = ca.DM_eye(6)
+        tip_offset = ca.DM.eye(6)
         prev_joint = None
         i = 0
         
@@ -393,8 +393,8 @@ class RobotDynamics(object):
             Ib_mat_i = self.kinematic_dict['I_b_mats'][i]
             Sr = ca.skew(c_parms[i])
             Ibar_link = Ib_mat_i + m_params[i] * (Sr.T @ Sr)   # com axis inertia in link frame i (lumped like this for id) using parallel axis theorem
-            Ici_list = ca.vertcat(Ibar_link[0,0], Ibar_link[0,1], Ibar_link[0,2],
-                      Ibar_link[1,1], Ibar_link[1,2], Ibar_link[2,2])
+            Ici_list = ca.vertcat(Ibar_link[0,0], Ibar_link[1,1], Ibar_link[2,2],
+                      Ibar_link[0,1], Ibar_link[0,2], Ibar_link[1,2])
             I_lump.append(Ici_list)
             
             # define lumped parameters for system id
@@ -411,14 +411,14 @@ class RobotDynamics(object):
 
             m_id_list.append(m_i_id)
             m_rci_id_list.append(m_rci_id)
-            I_id_list.append([I_i_xx_id, I_i_xy_id, I_i_xz_id, I_i_yy_id, I_i_yz_id, I_i_zz_id])
+            I_id_list.append([I_i_xx_id, I_i_yy_id, I_i_zz_id, I_i_xy_id, I_i_xz_id, I_i_yz_id])
             fs_list.append(fs_i_id)
             fv_list.append(fv_i_id)
             
         self._sys_id_coeff =  {
             "masses": m_params,                    # [m_i]
             "first_moments": mrc_lump,             # [m_i * r_ci] (3-vec per link)
-            "inertias_vec6": I_lump,               # [Ixx, Ixy, Ixz, Iyy, Iyz, Izz] about link i origin
+            "inertias_vec6": I_lump,               # [Ixx, Iyy, Izz, Ixy, Ixz, Iyz] about link i origin
             "fs": fs_coeff, 
             "fv": fv_coeff,
             
@@ -478,7 +478,7 @@ class RobotDynamics(object):
             fv_i_id = self._sys_id_coeff["fv_list"][i]
             fs_i_id = self._sys_id_coeff["fs_list"][i]
 
-            I_i_xx_id, I_i_xy_id, I_i_xz_id, I_i_yy_id, I_i_yz_id, I_i_zz_id = I_id_list
+            I_i_xx_id, I_i_yy_id, I_i_zz_id, I_i_xy_id, I_i_xz_id, I_i_yz_id = I_id_list
             
             I_i_id = ca.vertcat(
                 ca.hcat([I_i_xx_id, I_i_xy_id, I_i_xz_id]),
@@ -504,9 +504,9 @@ class RobotDynamics(object):
             Y_Pi = ca.horzcat(vec_g.T @ p_i, (R_i.T @ vec_g).T)   # shape (1, 1+3)
             P_i = Y_Pi @ ca.vertcat(m_i_id, m_rci_id)
 
-            # self._pseudo_inertia(m_i_id, m_rci_id, I_i_id)
+            self._pseudo_inertia(m_i_id, m_rci_id, I_i_id)
             # collect lumped parameters into
-            theta_i = [m_i_id, m_rci_id, I_i_xx_id, I_i_xy_id, I_i_xz_id, I_i_yy_id, I_i_yz_id, I_i_zz_id, fv_i_id, fs_i_id]
+            theta_i = [m_i_id, m_rci_id, I_i_xx_id, I_i_yy_id, I_i_zz_id, I_i_xy_id, I_i_xz_id, I_i_yz_id, fv_i_id, fs_i_id]
             theta_i_SX = ca.vertcat(*theta_i)
             theta_i_list.append(theta_i)
  
@@ -591,7 +591,7 @@ class RobotDynamics(object):
             
             Jv_com_i = self.kinematic_dict['com_geo_J'][i][0:3, :]
             Jω_com_i = self.kinematic_dict['com_geo_J'][i][3:6, :]
-            D += m_i @ (Jv_com_i.T @ Jv_com_i) + Jω_com_i.T @ R_i @ Ib_mat_i @ R_i.T @ Jω_com_i
+            D += m_i * (Jv_com_i.T @ Jv_com_i) + Jω_com_i.T @ R_i @ Ib_mat_i @ R_i.T @ Jω_com_i
         K = 0.5 * q_dot.T @ D @ q_dot
         return K , D
 
@@ -675,19 +675,105 @@ class RobotDynamics(object):
         _, _, _, _, _, vec_g, *_ = self.kinematic_dict['parameters']
         f = m_p * vec_g                             # 3x1, world force
         r_w = R_e @ r_com_body                      # 3x1, COM in world
-        tau = ca.cross(r_w, f)                      # 3x1, moment at tool origin
-        return ca.vertcat(tau, f)                   # 6x1
+        τ = ca.cross(r_w, f)                      # 3x1, moment at tool origin
+        return ca.vertcat(f, τ)                   # 6x1
 
     def _build_forward_dynamics(self, D, C, q_dot, g, B, tau, J_tip, F_payload):
         tau_payload = J_tip.T @ F_payload          # n×1
         tau_hat =  C@q_dot + g + B + tau_payload
-        qdd = ca.inv(D)@(tau - tau_hat)
+        # qdd = ca.inv(D)@(tau - tau_hat)
+        qdd = ca.solve(D, (tau - tau_hat))
         return qdd
 
     def _build_inverse_dynamics(self, D, C, q_dotdot, q_dot, g, B, J_tip, F_payload):
         tau_payload = J_tip.T @ F_payload
         joint_torque = D@q_dotdot + C@q_dot + g + B + tau_payload
         return joint_torque
+
+    def _compute_base_reaction(self):
+        """
+        Computes the manipulator reaction to the floating base at the base origin.
+        returns the wrench from the base onto the arm.
+        The floating base(AUV) feels the equal and opposite wrench.
+        """
+        # Get symbolic variables from the built model
+        params = self.kinematic_dict['parameters']
+        q, q_dot, q_ddot = params[8], params[9], params[10]
+        vec_g = params[5]
+        base_pose        = params[12]
+        world_pose       = params[13]
+        n_joints = self.kinematic_dict['n_joints']
+
+        # External wrench [f; τ]
+        F_ext = ca.SX.sym('F_ext', 6)
+    
+        # Base origin in WORLD
+        base_T  = plucker.XT(base_pose[0:3],  base_pose[3:6])
+        world_T = plucker.XT(world_pose[0:3], world_pose[3:6])
+        p0_X_world     = plucker.spatial_mtimes(base_T, world_T)     # works for both fixed & floating
+        _, _, p_base_W = plucker.spatial_to_homogeneous(p0_X_world)
+    
+        # Initialize total inertial force and torque (rate of change of momentum)
+        total_inertial_force = ca.SX.zeros(3, 1)
+        total_inertial_torque = ca.SX.zeros(3, 1)  # about the base origin
+
+        # Initialize total gravity wrench
+        total_gravity_force = ca.SX.zeros(3, 1)
+        total_gravity_torque = ca.SX.zeros(3, 1)   # about the base origin
+
+        # Loop through each link to aggregate its contribution
+        for i in range(n_joints):
+            # Get link parameters
+            m_i = self.kinematic_dict['parameters'][1][i]
+            I_ci = self.kinematic_dict['I_b_mats'][i] # Inertia tensor in link's CoM frame
+            R_i = self.kinematic_dict['com_R_symx'][i] # Rotation of CoM frame wrt world
+            p_ci = self.kinematic_dict['com_Fks'][i][0:3] # Position of CoM wrt world
+            r_ci  = p_ci - p_base_W                       # moment arm about BASE origin
+
+            # Get Jacobians for the center of mass
+            J_com_i = self.kinematic_dict['com_geo_J'][i]
+            Jv_ci, Jw_ci = J_com_i[0:3, :], J_com_i[3:6, :]
+
+            # Calculate linear and angular acceleration of the CoM using jtimes for J_dot * q_dot
+            a_ci = Jv_ci @ q_ddot + ca.jtimes(Jv_ci, q, q_dot)@q_dot
+            alpha_i = Jw_ci @ q_ddot + ca.jtimes(Jw_ci, q, q_dot)@q_dot
+            
+            # Angular velocity of the link
+            w_i = Jw_ci @ q_dot
+
+            I_world_i = R_i @ I_ci @ R_i.T
+            
+            # Rate of change of linear momentum for link i
+            f_in   = m_i * a_ci
+            # Rate of change of angular momentum for link i, computed about the base origin
+            # dL/dt = r x (m*a) + I_world*alpha + w x (I_world*w)
+            τ_in   = ca.cross(r_ci, f_in) + I_world_i @ alpha_i + ca.cross(w_i, I_world_i @ w_i)
+
+            total_inertial_force  += f_in
+            total_inertial_torque += τ_in
+        
+            # Gravity force and torque contribution from link i
+            f_g = m_i * vec_g
+            total_gravity_force  += f_g
+            total_gravity_torque += ca.cross(r_ci, f_g)
+
+        # Wrench from external force, transformed to the base frame
+        f_ext = F_ext[0:3]
+        τ_ext_tip = F_ext[3:6]
+        p_tip = self.kinematic_dict['Fks'][-1][0:3]
+        r_tip     = p_tip - p_base_W
+        τ_ext = ca.cross(r_tip, f_ext) + τ_ext_tip
+        
+        # From Newton-Euler: Σ F_external = dP/dt  => F_base + F_gravity + F_ext = F_inertial
+        base_f  = total_inertial_force  - total_gravity_force  - f_ext
+        # From Newton-Euler: Σ τ_external = dL/dt => τ_base + τ_gravity + τ_ext = τ_inertial
+        base_τ = total_inertial_torque - total_gravity_torque - τ_ext
+    
+        # Combine into the final base wrench vector
+        W_base = ca.vertcat(base_f, base_τ)
+
+        return W_base
+
 
     def build_model(self, root, tip, floating_base=False):
         """
@@ -733,6 +819,8 @@ class RobotDynamics(object):
         self.H = self.K + self.P
         # input. power of the system
         self.H_dot = q_dot.T@tau
+        
+        self.base_Rct = self._compute_base_reaction()
 
         # Step 5: Perform assertions to ensure matrix dimensions are consistent
         assert self.D.shape == (n_joints, n_joints), f"Inertia matrix D has incorrect shape: {self.D.shape}"
@@ -740,6 +828,7 @@ class RobotDynamics(object):
         assert self.D_dot.shape == (n_joints, n_joints), f"matrix D_dot has incorrect shape: {self.D_dot.shape}"
         assert self.N.shape == (n_joints, n_joints), f"matrix N has incorrect shape: {self.N.shape}"
         assert self.g.shape == (n_joints, 1), f"Gravity vector g has incorrect shape: {self.g.shape}"
+        assert self.base_Rct.shape == (6, 1), f"base_Rct vector has incorrect shape: {self.base_Rct.shape}"
         
         F_payload = self._payload_wrench_from_mass( m_p, r_com_body)
         J_tip = self.kinematic_dict["geo_J"][-1]   # 6×n geometric Jacobian at the tool
@@ -835,97 +924,8 @@ class RobotDynamics(object):
         """Returns the input power of the system."""
         return self.H_dot
     
-    # not sure. research into this and resolve
-    def _compute_base_wrench(self):
-        """
-        Computes the wrench exerted by the base on the manipulator and returns it as a CasADi function.
-
-        This function calculates the 6D wrench (forces and torques) that the base must 
-        provide to support the manipulator for a given motion state ($q, \dot{q}, \ddot{q}$), 
-        accounting for gravity and any external wrench applied at the tip. The wrench is 
-        expressed in the world frame.
-
-        The calculation is based on the aggregate Newton-Euler equations for the
-        entire manipulator system: $\sum F_{ext} = \frac{d}{dt}P_{total}$ and $\sum \tau_{ext} = \frac{d}{dt}L_{total}$.
-
-        The returned wrench $W_{base} = [\tau_{base}; f_{base}]$ represents the action from the base onto the robot.
-
-        Returns:
-            casadi.Function: A function with the signature `(q, q_dot, q_ddot, F_ext, g) -> wrench`.
-                             - `q`, `q_dot`, `q_ddot`: Joint state vectors.
-                             - `F_ext`: 6x1 external wrench ($[\tau_{ext}; f_{ext}]$) at the end-effector.
-                             - `g`: 3x1 gravity vector.
-                             - `wrench`: The calculated 6x1 base wrench.
-        """
-        # Get symbolic variables from the built model
-        params = self.kinematic_dict['parameters']
-        q, q_dot, q_ddot = params[8], params[9], params[10]
-        vec_g = params[5]
-        n_joints = self.kinematic_dict['n_joints']
-
-        # Define symbolic input for the external wrench at the tip [τ_ext; f_ext]
-        F_ext = ca.SX.sym('F_ext', 6)
-
-        # Initialize total inertial force and torque (rate of change of momentum)
-        total_inertial_force = ca.SX.zeros(3, 1)
-        total_inertial_torque = ca.SX.zeros(3, 1)  # about the base origin
-
-        # Initialize total gravity wrench
-        total_gravity_force = ca.SX.zeros(3, 1)
-        total_gravity_torque = ca.SX.zeros(3, 1)   # about the base origin
-
-        # Loop through each link to aggregate its contribution
-        for i in range(n_joints):
-            # Get link parameters
-            m_i = self.kinematic_dict['parameters'][1][i]
-            I_ci = self.kinematic_dict['I_b_mats'][i] # Inertia tensor in link's CoM frame
-            R_i = self.kinematic_dict['com_R_symx'][i] # Rotation of CoM frame wrt world
-            p_ci = self.kinematic_dict['com_Fks'][i][0:3] # Position of CoM wrt world
-
-            # Get Jacobians for the center of mass
-            J_com_i = self.kinematic_dict['com_geo_J'][i]
-            Jv_ci = J_com_i[0:3, :]
-            Jomega_i = J_com_i[3:6, :]
-
-            # Calculate linear and angular acceleration of the CoM using jtimes for J_dot * q_dot
-            # a_ci = Jv * q_ddot + Jv_dot * q_dot
-            a_ci = Jv_ci @ q_ddot + ca.jtimes(Jv_ci, q, q_dot)@q_dot
-            # alpha_i = Jomega * q_ddot + Jomega_dot * q_dot
-            alpha_i = Jomega_i @ q_ddot + ca.jtimes(Jomega_i, q, q_dot)@q_dot
-            
-            # Angular velocity of the link
-            omega_i = Jomega_i @ q_dot
-
-            # Rate of change of linear momentum for link i
-            inertial_force_i = m_i * a_ci
-            total_inertial_force += inertial_force_i
-
-            # Rate of change of angular momentum for link i, computed about the base origin
-            # dL/dt = r x (m*a) + I_world*alpha + w x (I_world*w)
-            I_world_i = R_i @ I_ci @ R_i.T
-            inertial_torque_i = ca.cross(p_ci, inertial_force_i) \
-                              + I_world_i @ alpha_i \
-                              + ca.cross(omega_i, I_world_i @ omega_i)
-            total_inertial_torque += inertial_torque_i
-
-            # Gravity force and torque contribution from link i
-            gravity_force_i = m_i * vec_g
-            total_gravity_force += gravity_force_i
-            total_gravity_torque += ca.cross(p_ci, gravity_force_i)
-
-        # Wrench from external force, transformed to the base frame
-        f_ext_force = F_ext[3:6]
-        tau_ext_tip = F_ext[0:3]
-        p_tip = self.kinematic_dict['Fks'][-1][0:3]
-        tau_ext_base = ca.cross(p_tip, f_ext_force) + tau_ext_tip
-        
-        # From Newton-Euler: Σ F_external = dP/dt  => F_base + F_gravity + F_ext = F_inertial
-        base_force = total_inertial_force - total_gravity_force - f_ext_force
-
-        # From Newton-Euler: Σ τ_external = dL/dt => τ_base + τ_gravity + τ_ext = τ_inertial
-        base_torque = total_inertial_torque - total_gravity_torque - tau_ext_base
-
-        # Combine into the final base wrench vector
-        base_wrench = ca.vertcat(base_torque, base_force)
-
-        return base_wrench
+    @property
+    @require_built_model
+    def get_base_Reaction(self):
+        """Returns the manipulation base reactions."""
+        return self.base_Rct
