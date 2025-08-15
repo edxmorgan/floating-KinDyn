@@ -654,7 +654,7 @@ class RobotDynamics(object):
                 D_dot[k,j] = d_dot_kj
         return D_dot
           
-    def _build_N(self, q, d_dot, D):
+    def _build_N(self, q, q_dot, D):
         n_joints = q.size1()
         N = ca.SX.zeros(n_joints, n_joints)
         for k in range(n_joints):
@@ -665,7 +665,7 @@ class RobotDynamics(object):
                     qj = q[j]
                     dij = D[i,j]
                     dki = D[k,i]
-                    q_dot_i = d_dot[i]
+                    q_dot_i = q_dot[i]
                     n_kj += (ca.gradient(dij, qk) - ca.gradient(dki, qj))*q_dot_i
                 N[k,j] = n_kj
         return N
@@ -836,12 +836,37 @@ class RobotDynamics(object):
         J_tip = self.kinematic_dict["geo_J"][-1]   # 6×n geometric Jacobian at the tool
         self.qdd = self._build_forward_dynamics(self.D, self.C, q_dot, self.g, self.B, tau, J_tip, F_payload)
         assert self.qdd.shape == (n_joints, 1), f"Forward dynamics vector qdd has incorrect shape: {self.qdd.shape}"
+
+        self.F_next = self.forward_simulation()
         
         self.joint_torque = self._build_inverse_dynamics(self.D, self.C, q_dotdot, q_dot, self.g, self.B, J_tip, F_payload)
         assert self.joint_torque.shape == (n_joints, 1), f"Inverse dynamics vector qdd has incorrect shape: {self.joint_torque.shape}"
 
         return self.kinematic_dict, self.K, self.P, self.L, self.D, self.C, self.g, self.B, self.qdd, self.joint_torque, self._sys_id_coeff, F_payload
-   
+
+    def forward_simulation(self):
+        c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
+        dt = ca.SX.sym('dt')
+        rigid_p = ca.vertcat(*c_parms, *m_params, *I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p, base_pose, world_pose)
+        p = ca.vertcat(rigid_p, dt)
+        x    = ca.vertcat(q,  q_dot)
+        xdot = ca.vertcat(q_dot, self.qdd) * dt
+        dae  = {'x': x, 'ode': xdot, 'p': p, 'u': tau}
+        opts = {
+            'simplify': True,
+            'number_of_finite_elements': 10,
+            }
+        intg = ca.integrator('intg', 'rk', dae, 0, 1, opts)
+        x_next = intg(x0=x, u=tau, p=p)['xf']
+        F_next = ca.Function('next', [x, tau, dt, rigid_p], [x_next])
+        return F_next
+    
+    @property
+    @require_built_model
+    def get_forward_simulation(self):
+        """Returns the forward dynamics of the system."""
+        return self.F_next
+    
     @property
     @require_built_model
     def get_kinematic_dict(self):
