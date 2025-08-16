@@ -72,16 +72,6 @@ def rotation_rpy(roll, pitch, yaw):
     R[2,2] = ca.cos(pitch)*ca.cos(roll)
     return R
 
-# def spatial_force_transform(R, r):
-#     """Returns the spatial force transform from a 3x3 rotation matrix
-#     and a 3x1 displacement vector."""
-#     X = ca.SX.zeros(6, 6)
-#     X[:3, :3] = R.T
-#     X[3:, 3:] = R.T
-#     X[:3, 3:] = ca.mtimes(ca.skew(r), R.T)
-#     return X
-
-
 def spatial_transform(R, r):
     """Returns the spatial motion transform from a 3x3 rotation matrix
     and a 3x1 displacement vector."""

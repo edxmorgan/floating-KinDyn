@@ -303,6 +303,7 @@ class RobotDynamics(object):
         n_joints = self.get_n_joints(root, tip)
         chain = self.robot_desc.get_chain(root, tip)
         i_X_p = []   # collect transforms from child link origin to parent link origin
+        axis_signs = []
         tip_offset = ca.DM.eye(6)
         prev_joint = None
         i = 0
@@ -333,34 +334,49 @@ class RobotDynamics(object):
                             joint.origin.rpy)
 
                 elif joint.type == "prismatic":
-                    Si = ca.SX([0, 0, 0,
-                        joint.axis[0],
-                        joint.axis[1],
-                        joint.axis[2]])
-                    q_sign = Si.T @ ca.fabs(Si)
+                    a_parent = ca.SX(joint.axis)
+                    R = plucker.rotation_rpy(joint.origin.rpy[0], joint.origin.rpy[1],joint.origin.rpy[2])  # parent→joint
+                    a_true = R.T @ a_parent
+                    a_used = a_parent
+                    s_i = ca.sign(ca.dot(a_true, a_used))
+                    axis_signs.append(s_i)
+
+                    # Si = ca.SX([0, 0, 0,
+                    #     joint.axis[0],
+                    #     joint.axis[1],
+                    #     joint.axis[2]])
+                    # q_sign = Si.T @ ca.fabs(Si)
                     XJT = plucker.XJT_prismatic(
                         joint.origin.xyz,
                         joint.origin.rpy,
-                        joint.axis, q_sign*q[i])
+                        joint.axis,
+                        s_i*q[i])
                     if prev_joint == "fixed":
                         XJT = plucker.spatial_mtimes(XJT, XT_prev)
                     i_X_p.append(XJT)
                     i += 1
 
                 elif joint.type in ["revolute", "continuous"]:
-                    Si = ca.SX([
-                                joint.axis[0],
-                                joint.axis[1],
-                                joint.axis[2],
-                                0,
-                                0,
-                                0])
-                    q_sign = Si.T @ ca.fabs(Si)
+                    a_parent = ca.SX(joint.axis)         # as authored
+                    R = plucker.rotation_rpy(joint.origin.rpy[0], joint.origin.rpy[1],joint.origin.rpy[2])  # parent→joint
+                    a_true = R.T @ a_parent              # axis in joint frame (URDF spec)
+                    a_used = a_parent                    # what your kernel effectively uses
+                    s_i = ca.sign(ca.dot(a_true, a_used))
+                    axis_signs.append(s_i)
+
+                    # Si = ca.SX([
+                    #             joint.axis[0],
+                    #             joint.axis[1],
+                    #             joint.axis[2],
+                    #             0,
+                    #             0,
+                    #             0])
+                    # q_sign = Si.T @ ca.fabs(Si)
                     XJT = plucker.XJT_revolute(
                         joint.origin.xyz,
                         joint.origin.rpy,
                         joint.axis,
-                        q_sign*q[i])
+                        s_i*q[i])
                     if prev_joint == "fixed":
                         XJT = plucker.spatial_mtimes(XJT, XT_prev)
                     i_X_p.append(XJT)
@@ -370,7 +386,7 @@ class RobotDynamics(object):
                 if joint.child == tip:
                     if joint.type == "fixed":
                         tip_offset = XT_prev
-
+        self._axis_signs = ca.diag(ca.vcat(axis_signs))   # n×n diagonal
         return i_X_p, tip_offset, c_parms, m_params, I_b_mats, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p, q, q_dot, q_dotdot, tau
 
     def _sys_id_lump_parameters(self):
@@ -632,6 +648,9 @@ class RobotDynamics(object):
     
     def _build_gravity_term(self, P, q):
         g_q = ca.gradient(P, q)
+        # apply per-joint compensation to the gravity *mapping* only
+        if hasattr(self, "_axis_signs"):
+            g_q = self._axis_signs @ g_q
         return g_q
     
     def _build_friction_term(self, Fv, Fs, q_dot):
@@ -682,11 +701,27 @@ class RobotDynamics(object):
 
     def _build_forward_dynamics(self, D, C, q_dot, g, B, tau, J_tip, F_payload):
         tau_payload = J_tip.T @ F_payload          # n×1
-        tau_hat =  C@q_dot + g + B + tau_payload
-        # qdd = ca.inv(D)@(tau - tau_hat)
-        qdd = ca.solve(D, (tau - tau_hat))
+        tau_hat =  g + B + tau_payload #C@q_dot + g + B #+ tau_payload
+        qdd = ca.solve(D, tau - tau_hat) # qdd = ca.inv(D)@(tau - tau_hat)
         return qdd
 
+    def forward_simulation(self):
+        c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
+        dt = ca.SX.sym('dt')
+        rigid_p = ca.vertcat(*c_parms, *m_params, *I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p, base_pose, world_pose)
+        p = ca.vertcat(rigid_p, dt)
+        x    = ca.vertcat(q,  q_dot)
+        xdot = ca.vertcat(q_dot, self.qdd) * dt
+        dae  = {'x': x, 'ode': xdot, 'p': p, 'u': tau}
+        opts = {
+            'simplify': True,
+            'number_of_finite_elements': 30,
+            }
+        intg = ca.integrator('intg', 'rk', dae, 0, 1, opts)
+        x_next = intg(x0=x, u=tau, p=p)['xf']
+        F_next = ca.Function('Mnext', [x, tau, dt, rigid_p], [x_next])
+        return F_next
+    
     def _build_inverse_dynamics(self, D, C, q_dotdot, q_dot, g, B, J_tip, F_payload):
         tau_payload = J_tip.T @ F_payload
         joint_torque = D@q_dotdot + C@q_dot + g + B + tau_payload
@@ -844,23 +879,6 @@ class RobotDynamics(object):
 
         return self.kinematic_dict, self.K, self.P, self.L, self.D, self.C, self.g, self.B, self.qdd, self.joint_torque, self._sys_id_coeff, F_payload
 
-    def forward_simulation(self):
-        c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
-        dt = ca.SX.sym('dt')
-        rigid_p = ca.vertcat(*c_parms, *m_params, *I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p, base_pose, world_pose)
-        p = ca.vertcat(rigid_p, dt)
-        x    = ca.vertcat(q,  q_dot)
-        xdot = ca.vertcat(q_dot, self.qdd) * dt
-        dae  = {'x': x, 'ode': xdot, 'p': p, 'u': tau}
-        opts = {
-            'simplify': True,
-            'number_of_finite_elements': 10,
-            }
-        intg = ca.integrator('intg', 'rk', dae, 0, 1, opts)
-        x_next = intg(x0=x, u=tau, p=p)['xf']
-        F_next = ca.Function('next', [x, tau, dt, rigid_p], [x_next])
-        return F_next
-    
     @property
     @require_built_model
     def get_forward_simulation(self):
