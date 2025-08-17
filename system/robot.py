@@ -518,7 +518,9 @@ class RobotDynamics(object):
             # define lumped parameters linear in potential energy
             p_i = self.kinematic_dict['Fks'][i][0:3]  # Position of joint i in world coordinates
             
-            Y_Pi = ca.horzcat(vec_g.T @ p_i, (R_i.T @ vec_g).T)   # shape (1, 1+3)
+
+            vec_g_world = R_i @ vec_g
+            Y_Pi = ca.horzcat(vec_g_world.T @ p_i, (R_i.T @ vec_g_world).T)   # shape (1, 1+3)
             P_i = Y_Pi @ ca.vertcat(m_i_id, m_rci_id)
 
             physical_plausibility_matrix = self._pseudo_inertia(m_i_id, m_rci_id, I_i_id)
@@ -622,7 +624,10 @@ class RobotDynamics(object):
             m_i = m_params[i] # Mass of the link
             i_com_Fks = self.kinematic_dict['com_Fks'][i]
             p_ci = i_com_Fks[0:3]  # Position of the center of mass of link i in world coordinates
-            P += m_i * vec_g.T @ p_ci
+            
+            R_i      = self.kinematic_dict['R_symx'][i]      # 3×3 (rotation of link i in world)
+            vec_g_world = R_i @ vec_g
+            P += m_i * vec_g_world.T @ p_ci
         return P
 
     def _christoﬀel_symbols_cijk(self, q, D, i, j, k):
@@ -648,9 +653,6 @@ class RobotDynamics(object):
     
     def _build_gravity_term(self, P, q):
         g_q = ca.gradient(P, q)
-        # apply per-joint compensation to the gravity *mapping* only
-        if hasattr(self, "_axis_signs"):
-            g_q = self._axis_signs @ g_q
         return g_q
     
     def _build_friction_term(self, Fv, Fs, q_dot):
@@ -790,7 +792,8 @@ class RobotDynamics(object):
             total_inertial_torque += τ_in
         
             # Gravity force and torque contribution from link i
-            f_g = m_i * vec_g
+            vec_g_world = R_i @ vec_g
+            f_g = m_i * vec_g_world
             total_gravity_force  += f_g
             total_gravity_torque += ca.cross(r_ci, f_g)
 
