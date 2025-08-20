@@ -95,7 +95,6 @@ def revolute(xyz, rpy, axis, qi):
     T[3, 3] = 1.0
     return T
 
-
 def full_symbolic(xyz, rpy):
     """Gives a symbolic transformation matrix."""
     T = cs.SX.zeros(4, 4)

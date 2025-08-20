@@ -341,11 +341,6 @@ class RobotDynamics(object):
                     s_i = ca.sign(ca.dot(a_true, a_used))
                     axis_signs.append(s_i)
 
-                    # Si = ca.SX([0, 0, 0,
-                    #     joint.axis[0],
-                    #     joint.axis[1],
-                    #     joint.axis[2]])
-                    # q_sign = Si.T @ ca.fabs(Si)
                     XJT = plucker.XJT_prismatic(
                         joint.origin.xyz,
                         joint.origin.rpy,
@@ -364,14 +359,6 @@ class RobotDynamics(object):
                     s_i = ca.sign(ca.dot(a_true, a_used))
                     axis_signs.append(s_i)
 
-                    # Si = ca.SX([
-                    #             joint.axis[0],
-                    #             joint.axis[1],
-                    #             joint.axis[2],
-                    #             0,
-                    #             0,
-                    #             0])
-                    # q_sign = Si.T @ ca.fabs(Si)
                     XJT = plucker.XJT_revolute(
                         joint.origin.xyz,
                         joint.origin.rpy,
@@ -647,10 +634,7 @@ class RobotDynamics(object):
         return C
     
     def _build_gravity_term(self, P, q):
-        g_q = ca.gradient(P, q)
-        # apply per-joint compensation to the gravity *mapping* only
-        if hasattr(self, "_axis_signs"):
-            g_q = self._axis_signs @ g_q
+        g_q = self._axis_signs@ca.gradient(P, q)
         return g_q
     
     def _build_friction_term(self, Fv, Fs, q_dot):
@@ -715,7 +699,7 @@ class RobotDynamics(object):
         dae  = {'x': x, 'ode': xdot, 'p': p, 'u': tau}
         opts = {
             'simplify': True,
-            'number_of_finite_elements': 30,
+            'number_of_finite_elements': 5,
             }
         intg = ca.integrator('intg', 'rk', dae, 0, 1, opts)
         x_next = intg(x0=x, u=tau, p=p)['xf']
