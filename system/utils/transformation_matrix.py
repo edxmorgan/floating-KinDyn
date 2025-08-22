@@ -185,3 +185,15 @@ def numpy_rotation_distance_from_identity(R1, R2):
     """Rotation matrix distance based on distance from identity matrix.
     See comparisons at: https://link.springer.com/content/pdf/10.1007%2Fs10851-009-0161-2.pdf"""
     return np.linalg.norm(np.eye(1) - np.dot(R1, R2.T))
+
+
+def analytic_to_geometric(Ja, T):
+    """
+    Convert a 6×n analytic Jacobian (XYZ Euler) to geometric.
+    Ja  – analytic Jacobian  (6×n SX/DM)
+    """
+    # split linear / angular blocks
+    Jv = Ja[0:3, :]                  # linear rows stay the same
+    Jθ = Ja[3:6, :]                  # Euler‑rate rows → map
+    Jω = T @ Jθ                      # angular velocity rows
+    return cs.vertcat(Jv, Jω)        # 6×n geometric Jacobian

@@ -6,7 +6,7 @@ import numpy as np
 from platform import machine, system
 from urdf_parser_py.urdf import URDF, Pose
 import system.utils.transformation_matrix as Transformation
-import system.utils.plucker as plucker
+# import system.utils.plucker as plucker
 import system.utils.quaternion as quatT
 
 def require_built_model(func):
@@ -256,7 +256,7 @@ class RobotDynamics(object):
             Tb = Transformation.euler_xyz_rate_to_body_T(phi, theta, psi)
             
             # 6×n geometric Jacobian
-            Jg         = plucker.analytic_to_geometric(Ja, Ts)
+            Jg         = Transformation.analytic_to_geometric(Ja, Ts)
             Jb         = plucker.analytic_to_geometric(Ja, Tb)
             geo_J.append(Jg)
             body_J.append(Jb)
@@ -577,7 +577,7 @@ class RobotDynamics(object):
                     end_col = (j + 1) * n_theta
                     Y[i, start_col:end_col] = y_ij_b.T
                     
-        C = self._build_coriolis_centrifugal_matrix(q, q_dot, D)
+        C = self.coriolis_matrix(D, q, q_dot)
         g = self._build_gravity_term(P, q)
         
         theta = ca.vertcat(*theta)
@@ -612,27 +612,46 @@ class RobotDynamics(object):
             P += m_i * vec_g.T @ p_ci
         return P
 
-    def _christoﬀel_symbols_cijk(self, q, D, i, j, k):
-        """Returns the christoﬀel_symbols cijk"""
-        dkj_qi = ca.gradient(D[k, j], q[i])
-        dki_qj = ca.gradient(D[k, i], q[j])
-        dij_qk = ca.gradient(D[i, j], q[k])
-        cijk = 0.5 * (dkj_qi + dki_qj - dij_qk)
-        return cijk
+    def coriolis_times_qdot(self, M, q, qdot):
+        """
+        M: n×n SX or MX, inertia as a function of q
+        q, qdot: n×1
+        returns: n×1, C(q,qdot) @ qdot
+        """
+        n = q.size1()
+        # tensor of partials dM/dq_k
+        dM = [ca.reshape(ca.jacobian(ca.vec(M), q[k]), M.shape) for k in range(n)]
+        Mdot = sum(dM[k] * qdot[k] for k in range(n))
+        T = ca.mtimes([qdot.T, M, qdot])            # scalar, kinetic term 2T
+        grad_T = ca.gradient(T, q)                  # n×1
+        return Mdot @ qdot - 0.5 * grad_T
     
-    def _build_coriolis_centrifugal_matrix(self, q, q_dot, D):
-        n_joints = q.size1()
-        C = ca.SX.zeros(n_joints, n_joints)
-        for k in range(n_joints):
-            for j in range(n_joints):
-                ckj = 0
-                for i in range(n_joints):
-                    q_dot_i = q_dot[i]
-                    cijk = self._christoﬀel_symbols_cijk(q, D, i, j, k)
-                    ckj += (cijk*q_dot_i)
-                C[k,j] = ckj
+    def coriolis_matrix(self, M, q, qdot):
+        """
+        M: n×n SX or MX, inertia as a function of q
+        q, qdot: n×1
+        returns: n×n, C(q,qdot)
+        """
+        n = q.size1()
+        dM = [ca.reshape(ca.jacobian(ca.vec(M), q[k]), M.shape) for k in range(n)]  # list of n matrices
+        C = ca.SX.zeros(n, n) if isinstance(M, ca.SX) else ca.MX.zeros(n, n)
+
+        for j in range(n):
+            col = 0
+            for k in range(n):
+                # vector v with entries v_i = ∂M_{jk}/∂q_i
+                v = ca.vertcat(*[dM[i][j, k] for i in range(n)])
+                col += 0.5 * (dM[k][:, j] + dM[j][:, k] - v) * qdot[k]
+            C[:, j] = col
         return C
-    
+
+    def coriolis_check(self, M, q, qdot):
+        n = q.size1()
+        dM = [ca.reshape(ca.jacobian(ca.vec(M), q[k]), M.shape) for k in range(n)]
+        Mdot = sum(dM[k] * qdot[k] for k in range(n))
+        C = self.coriolis_matrix(M, q, qdot)
+        return Mdot - C - C.T     # should be skew, near zero off diagonal sum
+
     def _build_gravity_term(self, P, q):
         g_q = self._axis_signs@ca.gradient(P, q)
         return g_q
@@ -642,36 +661,6 @@ class RobotDynamics(object):
         column_friction = ca.diag(Fs)@ca.sign(q_dot)
         friction = viscous_friction + column_friction
         return friction
-    
-    def _build_D_dot(self, q, q_dot, D):
-        n_joints = q.size1()
-        D_dot = ca.SX.zeros(n_joints, n_joints)
-        for k in range(n_joints):
-            for j in range(n_joints):
-                d_dot_kj = 0
-                for i in range(n_joints):
-                    qi = q[i]
-                    q_dot_i = q_dot[i]
-                    dkj = D[k,j]
-                    d_dot_kj += ca.gradient(dkj, qi)*q_dot_i
-                D_dot[k,j] = d_dot_kj
-        return D_dot
-          
-    def _build_N(self, q, q_dot, D):
-        n_joints = q.size1()
-        N = ca.SX.zeros(n_joints, n_joints)
-        for k in range(n_joints):
-            for j in range(n_joints):
-                n_kj = 0
-                for i in range(n_joints):
-                    qk = q[k]
-                    qj = q[j]
-                    dij = D[i,j]
-                    dki = D[k,i]
-                    q_dot_i = q_dot[i]
-                    n_kj += (ca.gradient(dij, qk) - ca.gradient(dki, qj))*q_dot_i
-                N[k,j] = n_kj
-        return N
 
     def _payload_wrench_from_mass(self, m_p, r_com_body):
         # r_com_body: 3x1, COM in tool (end-effector) frame
@@ -683,9 +672,10 @@ class RobotDynamics(object):
         τ = ca.cross(r_w, f)                      # 3x1, moment at tool origin
         return ca.vertcat(f, τ)                   # 6x1
 
-    def _build_forward_dynamics(self, D, C, q_dot, g, B, tau, J_tip, F_payload):
+    def _build_forward_dynamics(self, D, C, q, q_dot, g, B, tau, J_tip, F_payload):
         tau_payload = J_tip.T @ F_payload          # n×1
-        tau_hat =  g + B + tau_payload #C@q_dot + g + B #+ tau_payload
+        Cq_dot = self.coriolis_times_qdot(D, q, q_dot)
+        tau_hat =  Cq_dot + g + B + tau_payload
         qdd = ca.solve(D, tau - tau_hat) # qdd = ca.inv(D)@(tau - tau_hat)
         return qdd
 
@@ -699,16 +689,17 @@ class RobotDynamics(object):
         dae  = {'x': x, 'ode': xdot, 'p': p, 'u': tau}
         opts = {
             'simplify': True,
-            'number_of_finite_elements': 5,
+            'number_of_finite_elements': 10,
             }
         intg = ca.integrator('intg', 'rk', dae, 0, 1, opts)
         x_next = intg(x0=x, u=tau, p=p)['xf']
         F_next = ca.Function('Mnext', [x, tau, dt, rigid_p], [x_next])
         return F_next
     
-    def _build_inverse_dynamics(self, D, C, q_dotdot, q_dot, g, B, J_tip, F_payload):
+    def _build_inverse_dynamics(self, D, C, q_dotdot, q_dot, q, g, B, J_tip, F_payload):
         tau_payload = J_tip.T @ F_payload
-        joint_torque = D@q_dotdot + C@q_dot + g + B + tau_payload
+        Cq_dot = self.coriolis_times_qdot(D, q, q_dot)
+        joint_torque = D@q_dotdot + Cq_dot + g + B + tau_payload
         return joint_torque
 
     def _compute_base_reaction(self):
@@ -832,9 +823,9 @@ class RobotDynamics(object):
         self.B = self._build_friction_term(fv_coeff, fs_coeff , q_dot)
         
         # Coriolis matrix is derived from the inertia matrix and joint velocities
-        self.C = self._build_coriolis_centrifugal_matrix(q, q_dot, self.D)
-        self.D_dot = self._build_D_dot(q, q_dot, self.D)
-        self.N = self._build_N(q, q_dot, self.D)
+        self.C = self.coriolis_matrix( self.D, q, q_dot)
+        self.Mdot_2C = self.coriolis_check(self.D, q, q_dot)
+ 
         self.id_D, self.id_C, self.id_K, self.id_P, self.id_g, self.Y, self.id_theta, self.physical_plausibility_matrices = self._build_sys_regressor(q, q_dot, q_dotdot)
         # total energy of the system
         self.H = self.K + self.P
@@ -846,19 +837,17 @@ class RobotDynamics(object):
         # Step 5: Perform assertions to ensure matrix dimensions are consistent
         assert self.D.shape == (n_joints, n_joints), f"Inertia matrix D has incorrect shape: {self.D.shape}"
         assert self.C.shape == (n_joints, n_joints), f"Coriolis matrix C has incorrect shape: {self.C.shape}"
-        assert self.D_dot.shape == (n_joints, n_joints), f"matrix D_dot has incorrect shape: {self.D_dot.shape}"
-        assert self.N.shape == (n_joints, n_joints), f"matrix N has incorrect shape: {self.N.shape}"
         assert self.g.shape == (n_joints, 1), f"Gravity vector g has incorrect shape: {self.g.shape}"
         assert self.base_Rct.shape == (6, 1), f"base_Rct vector has incorrect shape: {self.base_Rct.shape}"
         
         F_payload = self._payload_wrench_from_mass( m_p, r_com_body)
         J_tip = self.kinematic_dict["geo_J"][-1]   # 6×n geometric Jacobian at the tool
-        self.qdd = self._build_forward_dynamics(self.D, self.C, q_dot, self.g, self.B, tau, J_tip, F_payload)
+        self.qdd = self._build_forward_dynamics(self.D, self.C, q, q_dot, self.g, self.B, tau, J_tip, F_payload)
         assert self.qdd.shape == (n_joints, 1), f"Forward dynamics vector qdd has incorrect shape: {self.qdd.shape}"
 
         self.F_next = self.forward_simulation()
         
-        self.joint_torque = self._build_inverse_dynamics(self.D, self.C, q_dotdot, q_dot, self.g, self.B, J_tip, F_payload)
+        self.joint_torque = self._build_inverse_dynamics(self.D, self.C, q_dotdot, q_dot, q, self.g, self.B, J_tip, F_payload)
         assert self.joint_torque.shape == (n_joints, 1), f"Inverse dynamics vector qdd has incorrect shape: {self.joint_torque.shape}"
 
         return self.kinematic_dict, self.K, self.P, self.L, self.D, self.C, self.g, self.B, self.qdd, self.joint_torque, self._sys_id_coeff, F_payload
@@ -928,18 +917,6 @@ class RobotDynamics(object):
     def get_friction_vector(self):
         """Returns the friction vector of the system."""
         return self.B
-    
-    @property
-    @require_built_model
-    def get_N(self):
-        """Returns the N = D_dot-2C of the system."""
-        return self.N
-
-    @property
-    @require_built_model
-    def get_D_dot_2C(self):
-        """Returns the N = D_dot-2C of the system."""
-        return self.D_dot - 2*self.C
 
     @property
     @require_built_model
