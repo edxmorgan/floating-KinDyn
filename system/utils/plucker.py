@@ -142,17 +142,6 @@ def inverse_spatial_transform(i_X_p):
     r_x_E_T = Er_x.T
     p_X_i[3:,:3] = r_x_E_T
     return p_X_i
- 
-def analytic_to_geometric(Ja, T):
-    """
-    Convert a 6×n analytic Jacobian (XYZ Euler) to geometric.
-    Ja  – analytic Jacobian  (6×n SX/DM)
-    """
-    # split linear / angular blocks
-    Jv = Ja[0:3, :]                  # linear rows stay the same
-    Jθ = Ja[3:6, :]                  # Euler‑rate rows → map
-    Jω = T @ Jθ                      # angular velocity rows
-    return ca.vertcat(Jv, Jω)        # 6×n geometric Jacobian
 
 def rotation_matrix_to_euler(R, order='zyx'):
     """
