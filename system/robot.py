@@ -303,7 +303,6 @@ class RobotDynamics(object):
         n_joints = self.get_n_joints(root, tip)
         chain = self.robot_desc.get_chain(root, tip)
         i_X_p = []   # collect transforms from child link origin to parent link origin
-        axis_signs = []
         tip_offset = ca.DM.eye(6)
         prev_joint = None
         i = 0
@@ -334,49 +333,22 @@ class RobotDynamics(object):
                             joint.origin.rpy)
 
                 elif joint.type == "prismatic":
-                    a_parent = ca.SX(joint.axis)
-                    R = plucker.rotation_rpy(joint.origin.rpy[0], joint.origin.rpy[1],joint.origin.rpy[2])  # parent→joint
-                    a_true = R.T @ a_parent
-                    a_used = a_parent
-                    s_i = ca.sign(ca.dot(a_true, a_used))
-                    axis_signs.append(s_i)
-
-                    # Si = ca.SX([0, 0, 0,
-                    #     joint.axis[0],
-                    #     joint.axis[1],
-                    #     joint.axis[2]])
-                    # q_sign = Si.T @ ca.fabs(Si)
                     XJT = plucker.XJT_prismatic(
                         joint.origin.xyz,
                         joint.origin.rpy,
                         joint.axis,
-                        s_i*q[i])
+                        q[i])
                     if prev_joint == "fixed":
                         XJT = plucker.spatial_mtimes(XJT, XT_prev)
                     i_X_p.append(XJT)
                     i += 1
 
                 elif joint.type in ["revolute", "continuous"]:
-                    a_parent = ca.SX(joint.axis)         # as authored
-                    R = plucker.rotation_rpy(joint.origin.rpy[0], joint.origin.rpy[1],joint.origin.rpy[2])  # parent→joint
-                    a_true = R.T @ a_parent              # axis in joint frame (URDF spec)
-                    a_used = a_parent                    # what your kernel effectively uses
-                    s_i = ca.sign(ca.dot(a_true, a_used))
-                    axis_signs.append(s_i)
-
-                    # Si = ca.SX([
-                    #             joint.axis[0],
-                    #             joint.axis[1],
-                    #             joint.axis[2],
-                    #             0,
-                    #             0,
-                    #             0])
-                    # q_sign = Si.T @ ca.fabs(Si)
                     XJT = plucker.XJT_revolute(
                         joint.origin.xyz,
                         joint.origin.rpy,
                         joint.axis,
-                        s_i*q[i])
+                        q[i])
                     if prev_joint == "fixed":
                         XJT = plucker.spatial_mtimes(XJT, XT_prev)
                     i_X_p.append(XJT)
@@ -386,7 +358,6 @@ class RobotDynamics(object):
                 if joint.child == tip:
                     if joint.type == "fixed":
                         tip_offset = XT_prev
-        self._axis_signs = ca.diag(ca.vcat(axis_signs))   # n×n diagonal
         return i_X_p, tip_offset, c_parms, m_params, I_b_mats, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p, q, q_dot, q_dotdot, tau
 
     def _sys_id_lump_parameters(self):
@@ -648,9 +619,6 @@ class RobotDynamics(object):
     
     def _build_gravity_term(self, P, q):
         g_q = ca.gradient(P, q)
-        # apply per-joint compensation to the gravity *mapping* only
-        if hasattr(self, "_axis_signs"):
-            g_q = self._axis_signs @ g_q
         return g_q
     
     def _build_friction_term(self, Fv, Fs, q_dot):

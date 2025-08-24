@@ -124,9 +124,9 @@
   <joint name="alpha_axis_c" type="revolute">
     <parent link="alpha_m2_joint_link"/>
     <child link="alpha_m2_1_2_link"/>
-    <origin rpy="0 0 3.14159" xyz="-0.04 0 -0.1453"/>
-    <axis xyz="0 -1 0"/>
-    <limit effort="9.0" upper="0.0" lower="-3.5" velocity="0.5"/>
+    <origin xyz="-0.04 0 -0.1453" rpy="0 0 3.14159"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="9.0" lower="0.2" upper="3.4" velocity="0.5"/>
   </joint>
   <link name="alpha_m1_link">
     <inertial>
