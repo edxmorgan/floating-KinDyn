@@ -710,9 +710,9 @@ class RobotDynamics(object):
         τ = ca.cross(r_w, f)                      # 3x1, moment at tool origin
         return ca.vertcat(f, τ)                   # 6x1
 
-    def _build_forward_dynamics(self, D, C, q_dot, g, B, tau, J_tip, F_payload):
+    def _build_forward_dynamics(self, D, Cq_dot, g, B, tau, J_tip, F_payload):
         tau_payload = J_tip.T @ F_payload          # n×1
-        tau_hat =  C@q_dot + g + B + tau_payload # collect non-inertial torques
+        tau_hat =  Cq_dot + g + B + tau_payload # collect non-inertial torques
          # solve D(q)·q̈ = τ - τ̂  for q̈
          # using a linear solver is more stable than inverting D directly
          # especially for larger systems.
@@ -863,6 +863,7 @@ class RobotDynamics(object):
         
         # Coriolis matrix is derived from the inertia matrix and joint velocities
         self.C = self._coriolis_matrix(self.D, q, q_dot)
+        self.Cqdot = self._coriolis_times_qdot(self.D, q, q_dot)
 
         self.D_dot = self._build_D_dot(q, q_dot, self.D)
         self.N = self._build_N(q, q_dot, self.D)
@@ -877,6 +878,7 @@ class RobotDynamics(object):
         # Step 5: Perform assertions to ensure matrix dimensions are consistent
         assert self.D.shape == (n_joints, n_joints), f"Inertia matrix D has incorrect shape: {self.D.shape}"
         assert self.C.shape == (n_joints, n_joints), f"Coriolis matrix C has incorrect shape: {self.C.shape}"
+        assert self.Cqdot.shape == (n_joints, 1), f"Coriolis force Cf vector has incorrect shape: {self.Cqdot.shape}"
         assert self.D_dot.shape == (n_joints, n_joints), f"matrix D_dot has incorrect shape: {self.D_dot.shape}"
         assert self.N.shape == (n_joints, n_joints), f"matrix N has incorrect shape: {self.N.shape}"
         assert self.g.shape == (n_joints, 1), f"Gravity vector g has incorrect shape: {self.g.shape}"
@@ -884,7 +886,7 @@ class RobotDynamics(object):
         
         F_payload = self._payload_wrench_from_mass( m_p, r_com_body)
         J_tip = self.kinematic_dict["geo_J"][-1]   # 6×n geometric Jacobian at the tool
-        self.qdd = self._build_forward_dynamics(self.D, self.C, q_dot, self.g, self.B, tau, J_tip, F_payload)
+        self.qdd = self._build_forward_dynamics(self.D, self.Cqdot, self.g, self.B, tau, J_tip, F_payload)
         assert self.qdd.shape == (n_joints, 1), f"Forward dynamics vector qdd has incorrect shape: {self.qdd.shape}"
 
         self.F_next = self.forward_simulation()
