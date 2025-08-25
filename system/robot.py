@@ -6,8 +6,6 @@ import numpy as np
 from platform import machine, system
 from urdf_parser_py.urdf import URDF, Pose
 import system.utils.transformation_matrix as Transformation
-import system.utils.plucker as plucker
-import system.utils.quaternion as quatT
 
 def require_built_model(func):
     """Decorator that ensures the dynamics model has been built."""
@@ -95,6 +93,184 @@ class RobotDynamics(object):
 
         return n_actuated
 
+    def _model_calculation(self, root, tip):
+        """Calculates and returns model information needed in the
+        dynamics algorithms calculations, i.e transforms, joint space
+        and inertia."""
+        if self.robot_desc is None:
+            raise ValueError('Robot description not loaded from urdf')
+        n_joints = self.get_n_joints(root, tip)
+        chain = self.robot_desc.get_chain(root, tip)
+        i_X_p = []   # collect transforms from child link origin to parent link origin
+        tip_offset = ca.DM.eye(6)
+        prev_joint = None
+        i = 0
+        
+        c_parms, m_params, I_b_mats, I_params = self.links_inertial(n_joints)
+        q = ca.SX.sym("q", n_joints)
+        q_dot = ca.SX.sym("q_dot", n_joints)
+        vec_g = ca.SX.sym("vec_g", 3)  # gravity vector
+        tau = ca.SX.sym("tau", n_joints) # joint torque
+        q_dotdot = ca.SX.sym("q_dotdot", n_joints) # joint accelerations
+        fv_coeff = ca.SX.sym('Fv', n_joints)
+        fs_coeff = ca.SX.sym('Fs', n_joints)
+        r_com_body = ca.SX.sym("r_com_body", 3)  # 3x1, COM in tool (end-effector) frame
+        m_p = ca.SX.sym("m_p") # payload mass
+        
+        for item in chain:
+            if item in self.robot_desc.joint_map:
+                joint = self.robot_desc.joint_map[item]
+
+                if joint.type == "fixed":
+                    if prev_joint == "fixed":
+                        XT_prev = XT_prev @ Transformation.T_from_xyz_rpy(joint.origin.xyz, joint.origin.rpy)
+                    else:
+                        XT_prev = Transformation.T_from_xyz_rpy(
+                            joint.origin.xyz,
+                            joint.origin.rpy)
+
+                elif joint.type == "prismatic":
+                    XJT = Transformation.T_prismatic(
+                        joint.origin.xyz,
+                        joint.origin.rpy,
+                        joint.axis,
+                        q[i])
+                    if prev_joint == "fixed":
+                        XJT = XT_prev @ XJT
+                    i_X_p.append(XJT)
+                    i += 1
+
+                elif joint.type in ["revolute", "continuous"]:
+                    XJT = Transformation.T_revolute(
+                        joint.origin.xyz,
+                        joint.origin.rpy,
+                        joint.axis,
+                        q[i])
+                    if prev_joint == "fixed":
+                        XJT = XT_prev @ XJT
+                    i_X_p.append(XJT)
+                    i += 1
+
+                prev_joint = joint.type
+                if joint.child == tip and joint.type == "fixed":
+                    tip_offset = XT_prev
+        return i_X_p, tip_offset, c_parms, m_params, I_b_mats, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p, q, q_dot, q_dotdot, tau
+
+    def _kinematics(self, root, tip, floating_base = False):
+        """Returns the inverse dynamics as a casadi function."""
+        if self.robot_desc is None:
+            raise ValueError('Robot description not loaded from urdf')
+
+        n_joints = self.get_n_joints(root, tip)
+        
+        base_xyz = ca.SX.sym('base_xyz', 3) # manipulator mount link xyz wrt floating body origin 
+        base_rpy = ca.SX.sym('base_rpy', 3) # manipulator mount link rpy wrt floating body origin  
+        base_pose = ca.vertcat(base_xyz, base_rpy)
+
+        # floaing pose in world coordinates
+        world_x = ca.SX.sym('world_x') 
+        world_y = ca.SX.sym('world_y')
+        world_z = ca.SX.sym('world_z')
+        world_thet = ca.SX.sym('world_thet')
+        world_phi = ca.SX.sym('world_phi')
+        world_psi = ca.SX.sym('world_psi')
+        world_xyz = ca.vertcat(world_x, world_y, world_z)
+        world_rpy = ca.vertcat(world_phi, world_thet, world_psi)
+        world_pose = ca.vertcat(world_xyz, world_rpy)
+
+        i_X_p, tip_offset, c_parms, m_params, I_b_mats, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p, q, q_dot, q_dotdot, tau = self._model_calculation(root, tip)
+        i_X_0s = [] # transformation of joint i wrt base origin
+        icom_X_0s = [] # transformation of center of mass i wrt base origin
+        
+        base_T = Transformation.T_from_xyz_rpy(base_xyz, base_rpy)
+        world_T = Transformation.T_from_xyz_rpy(world_xyz, world_rpy)
+        for i in range(0, n_joints):
+            if i != 0:
+                i_X_0 = i_X_0 @ i_X_p[i]
+            else:
+                if floating_base:
+                    p0_X_world = world_T @base_T
+                    i_X_0 = p0_X_world @ i_X_p[i]
+                else:
+                    i_X_0 = base_T @ i_X_p[i]
+                    
+            c_i = c_parms[i]
+            com_X_i = Transformation.T_from_xyz_rpy(c_i, [0,0,0])
+            
+            icom_X_0s.append(i_X_0 @ com_X_i)
+            i_X_0s.append(i_X_0)  # transformation of joint i wrt base origin
+
+        end_i_X_0 = i_X_0 @ tip_offset # end-effector wrt base origin
+        i_X_0s.append(end_i_X_0)
+
+        R_symx, Fks, qFks, geo_J, body_J, anlyt_J = self._compute_Fk_and_jacobians(q, i_X_0s)
+        com_R_symx, com_Fks, com_qFks, com_geo_J, com_body_J, com_anlyt_J = self._compute_Fk_and_jacobians(q, icom_X_0s)
+        
+        dynamic_parameters = [c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose]
+        
+        kinematic_dict = {
+            "n_joints": n_joints,
+            
+            "i_X_0s": i_X_0s,
+            "icom_X_0s": icom_X_0s,
+            
+            "R_symx": R_symx,
+            "com_R_symx": com_R_symx,
+            
+            "Fks": Fks,
+            "com_Fks": com_Fks,
+            "qFks": qFks,
+            "com_qFks": com_qFks,
+            
+            "geo_J": geo_J,
+            "com_geo_J": com_geo_J,
+            
+            "body_J": body_J,
+            "com_body_J": com_body_J,
+            
+            "anlyt_J": anlyt_J,
+            "com_anlyt_J": com_anlyt_J,
+            
+            'I_b_mats': I_b_mats,
+            "parameters": dynamic_parameters
+        }
+        return kinematic_dict
+    
+    def _compute_Fk_and_jacobians(self, q, i_X_0s):
+        Fks = []  # collect forward kinematics in euler form
+        qFks = []  # collect forward kinematics in quaternion form
+        geo_J = []          # collect geometric J’s
+        body_J = []         # collect body J’s
+        anlyt_J = []          # collect analytic J’s
+        R_symx = []
+        for i in range(len(i_X_0s)):
+            R, p = i_X_0s[i][:3, :3], i_X_0s[i][:3, 3]
+            R_symx.append(R)  # collect rotation matrices
+        
+            # pose vector [p; φ θ ψ] using xyz Euler
+            rpy        = Transformation.rotation_matrix_to_euler(R, order='xyz')
+            T_euler    = ca.vertcat(p, rpy)
+            Fks.append(T_euler)  # forward kinematics
+            
+            qwxyz = Transformation.rotation_matrix_to_quaternion(R, order='wxyz')
+            T_quat = ca.vertcat(p, qwxyz)  # pose vector [p; qx qy qz qw]
+            qFks.append(T_quat)  # forward kinematics
+            
+            # 6×n analytic Jacobian
+            Ja         = ca.jacobian(T_euler, q)
+            anlyt_J.append(Ja)
+            
+            phi, theta, psi = rpy[0], rpy[1], rpy[2]
+
+            Ts = Transformation.euler_to_spatial_rate_T(phi, theta, psi)
+            Tb = Transformation.euler_to_body_rate_T(phi, theta, psi)
+            
+            # 6×n geometric Jacobian
+            Jg         = Transformation.analytic_to_geometric(Ja, Ts)
+            Jb         = Transformation.analytic_to_geometric(Ja, Tb)
+            geo_J.append(Jg)
+            body_J.append(Jb)
+        return R_symx, Fks, qFks, geo_J, body_J, anlyt_J
 
     def approximate_workspace(self, root, tip, joint_limits, base_T, floating_base=False, num_samples=100000):
         """
@@ -146,123 +322,6 @@ class RobotDynamics(object):
         # min_pos, max_pos define an axis-aligned bounding box
         return min_pos, max_pos, positions
 
-    def _kinematics(self, root, tip, floating_base = False):
-        """Returns the inverse dynamics as a casadi function."""
-        if self.robot_desc is None:
-            raise ValueError('Robot description not loaded from urdf')
-
-        n_joints = self.get_n_joints(root, tip)
-        
-        base_xyz = ca.SX.sym('base_xyz', 3) # manipulator mount link xyz wrt floating body origin 
-        base_rpy = ca.SX.sym('base_rpy', 3) # manipulator mount link rpy wrt floating body origin  
-        base_pose = ca.vertcat(base_xyz, base_rpy)
-
-        # floaing pose in world coordinates
-        world_x = ca.SX.sym('world_x') 
-        world_y = ca.SX.sym('world_y')
-        world_z = ca.SX.sym('world_z')
-        world_thet = ca.SX.sym('world_thet')
-        world_phi = ca.SX.sym('world_phi')
-        world_psi = ca.SX.sym('world_psi')
-        world_xyz = ca.vertcat(world_x, world_y, world_z)
-        world_rpy = ca.vertcat(world_phi, world_thet, world_psi)
-        world_pose = ca.vertcat(world_xyz, world_rpy)
-
-        i_X_p, tip_offset, c_parms, m_params, I_b_mats, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p, q, q_dot, q_dotdot, tau = self._model_calculation(root, tip)
-        i_X_0s = [] # transformation of joint i wrt base origin
-        icom_X_0s = [] # transformation of center of mass i wrt base origin
-        
-        base_T = plucker.XT(base_xyz, base_rpy)
-        world_T = plucker.XT(world_xyz, world_rpy)
-        for i in range(0, n_joints):
-            if i != 0:
-                i_X_0 = plucker.spatial_mtimes(i_X_p[i],i_X_0)
-            else:
-                if floating_base:
-                    p0_X_world = plucker.spatial_mtimes(base_T, world_T)
-                    i_X_0 = plucker.spatial_mtimes(i_X_p[i], p0_X_world)
-                else:
-                    i_X_0 = plucker.spatial_mtimes(i_X_p[i], base_T)
-                    
-            c_i = c_parms[i]
-            com_X_i = plucker.XT(c_i, [0,0,0])
-            
-            icom_X_0s.append(plucker.spatial_mtimes(com_X_i, i_X_0))
-            i_X_0s.append(i_X_0)  # transformation of joint i wrt base origin
-
-        end_i_X_0 = plucker.spatial_mtimes(tip_offset , i_X_0)
-        i_X_0s.append(end_i_X_0)
-
-        R_symx, Fks, qFks, geo_J, body_J, anlyt_J = self._compute_Fk_and_jacobians(q, i_X_0s)
-        com_R_symx, com_Fks, com_qFks, com_geo_J, com_body_J, com_anlyt_J = self._compute_Fk_and_jacobians(q, icom_X_0s)
-        
-        dynamic_parameters = [c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose]
-        
-        kinematic_dict = {
-            "n_joints": n_joints,
-            
-            "i_X_0s": i_X_0s,
-            "icom_X_0s": icom_X_0s,
-            
-            "R_symx": R_symx,
-            "com_R_symx": com_R_symx,
-            
-            "Fks": Fks,
-            "com_Fks": com_Fks,
-            "qFks": qFks,
-            "com_qFks": com_qFks,
-            
-            "geo_J": geo_J,
-            "com_geo_J": com_geo_J,
-            
-            "body_J": body_J,
-            "com_body_J": com_body_J,
-            
-            "anlyt_J": anlyt_J,
-            "com_anlyt_J": com_anlyt_J,
-            
-            'I_b_mats': I_b_mats,
-            "parameters": dynamic_parameters
-        }
-        return kinematic_dict
-    
-    def _compute_Fk_and_jacobians(self, q, i_X_0s):
-        Fks = []  # collect forward kinematics in euler form
-        qFks = []  # collect forward kinematics in quaternion form
-        geo_J = []          # collect geometric J’s
-        body_J = []         # collect body J’s
-        anlyt_J = []          # collect analytic J’s
-        R_symx = []
-        for i in range(len(i_X_0s)):
-            H, R, p = plucker.spatial_to_homogeneous(i_X_0s[i])
-            R_symx.append(R)  # collect rotation matrices
-        
-            # pose vector [p; φ θ ψ] using xyz Euler
-            rpy        = plucker.rotation_matrix_to_euler(R, order='xyz')
-            T_euler    = ca.vertcat(p, rpy)
-            Fks.append(T_euler)  # forward kinematics
-            
-            qwxyz = quatT.rotation_matrix_to_quaternion(R, order='wxyz')
-            T_quat = ca.vertcat(p, qwxyz)  # pose vector [p; qx qy qz qw]
-            qFks.append(T_quat)  # forward kinematics
-            
-            # 6×n analytic Jacobian
-            Ja         = ca.jacobian(T_euler, q)
-            anlyt_J.append(Ja)
-            
-            phi, theta, psi = rpy[0], rpy[1], rpy[2]
-
-            Ts = Transformation.euler_xyz_rate_to_spatial_T(phi, theta, psi)
-            Tb = Transformation.euler_xyz_rate_to_body_T(phi, theta, psi)
-            
-            # 6×n geometric Jacobian
-            Jg         = plucker.analytic_to_geometric(Ja, Ts)
-            Jb         = plucker.analytic_to_geometric(Ja, Tb)
-            geo_J.append(Jg)
-            body_J.append(Jb)
-        return R_symx, Fks, qFks, geo_J, body_J, anlyt_J
-
-
     def links_inertial(self, n_links: int):
         """
             the mass of link i is mi and that the inertia matrix of link i,
@@ -293,72 +352,6 @@ class RobotDynamics(object):
             I_tensors.append(I_k)
             I_params.extend([Ixx, Iyy, Izz, Ixy, Ixz, Iyz])
         return c_parms, m_params, I_tensors, I_params
-
-    def _model_calculation(self, root, tip):
-        """Calculates and returns model information needed in the
-        dynamics algorithms calculations, i.e transforms, joint space
-        and inertia."""
-        if self.robot_desc is None:
-            raise ValueError('Robot description not loaded from urdf')
-        n_joints = self.get_n_joints(root, tip)
-        chain = self.robot_desc.get_chain(root, tip)
-        i_X_p = []   # collect transforms from child link origin to parent link origin
-        tip_offset = ca.DM.eye(6)
-        prev_joint = None
-        i = 0
-        
-        c_parms, m_params, I_b_mats, I_params = self.links_inertial(n_joints)
-        q = ca.SX.sym("q", n_joints)
-        q_dot = ca.SX.sym("q_dot", n_joints)
-        vec_g = ca.SX.sym("vec_g", 3)  # gravity vector
-        tau = ca.SX.sym("tau", n_joints) # joint torque
-        q_dotdot = ca.SX.sym("q_dotdot", n_joints) # joint accelerations
-        fv_coeff = ca.SX.sym('Fv', n_joints)
-        fs_coeff = ca.SX.sym('Fs', n_joints)
-        r_com_body = ca.SX.sym("r_com_body", 3)  # 3x1, COM in tool (end-effector) frame
-        m_p = ca.SX.sym("m_p") # payload mass
-        
-        for item in chain:
-            if item in self.robot_desc.joint_map:
-                joint = self.robot_desc.joint_map[item]
-
-                if joint.type == "fixed":
-                    if prev_joint == "fixed":
-                        XT_prev = plucker.spatial_mtimes(
-                            plucker.XT(joint.origin.xyz, joint.origin.rpy),
-                            XT_prev)
-                    else:
-                        XT_prev = plucker.XT(
-                            joint.origin.xyz,
-                            joint.origin.rpy)
-
-                elif joint.type == "prismatic":
-                    XJT = plucker.XJT_prismatic(
-                        joint.origin.xyz,
-                        joint.origin.rpy,
-                        joint.axis,
-                        q[i])
-                    if prev_joint == "fixed":
-                        XJT = plucker.spatial_mtimes(XJT, XT_prev)
-                    i_X_p.append(XJT)
-                    i += 1
-
-                elif joint.type in ["revolute", "continuous"]:
-                    XJT = plucker.XJT_revolute(
-                        joint.origin.xyz,
-                        joint.origin.rpy,
-                        joint.axis,
-                        q[i])
-                    if prev_joint == "fixed":
-                        XJT = plucker.spatial_mtimes(XJT, XT_prev)
-                    i_X_p.append(XJT)
-                    i += 1
-
-                prev_joint = joint.type
-                if joint.child == tip:
-                    if joint.type == "fixed":
-                        tip_offset = XT_prev
-        return i_X_p, tip_offset, c_parms, m_params, I_b_mats, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p, q, q_dot, q_dotdot, tau
 
     def _sys_id_lump_parameters(self):
         c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
@@ -561,7 +554,7 @@ class RobotDynamics(object):
                     end_col = (j + 1) * n_theta
                     Y[i, start_col:end_col] = y_ij_b.T
                     
-        C = self._build_coriolis_centrifugal_matrix(q, q_dot, D)
+        C = self._coriolis_matrix(D, q, q_dot)
         g = self._build_gravity_term(P, q)
         
         theta = ca.vertcat(*theta)
@@ -604,7 +597,13 @@ class RobotDynamics(object):
         cijk = 0.5 * (dkj_qi + dki_qj - dij_qk)
         return cijk
     
-    def _build_coriolis_centrifugal_matrix(self, q, q_dot, D):
+    def _build_coriolis_centrifugal_matrix(self, M, q, q_dot):
+        # • **Method**: Uses Christoffel symbols approach
+        # • **Algorithm**: Triple nested loop computing Christoffel symbols c_ijk = 0.5 * (∂D_kj/∂q_i + ∂D_ki/∂q_j - ∂D_ij/∂q_k)
+        # • **Returns**: n×n Coriolis matrix C(q,q̇)
+        # • **Computational complexity**: O(n³) - very expensive for larger systems
+        # • **Issue**: This is the problematic function causing infinite compilation
+
         n_joints = q.size1()
         C = ca.SX.zeros(n_joints, n_joints)
         for k in range(n_joints):
@@ -612,11 +611,55 @@ class RobotDynamics(object):
                 ckj = 0
                 for i in range(n_joints):
                     q_dot_i = q_dot[i]
-                    cijk = self._christoﬀel_symbols_cijk(q, D, i, j, k)
+                    cijk = self._christoﬀel_symbols_cijk(q, M, i, j, k)
                     ckj += (cijk*q_dot_i)
                 C[k,j] = ckj
         return C
-    
+
+    def _coriolis_matrix(self, M, q, q_dot):
+        # • **Method**: Direct matrix differentiation approach
+        # • **Algorithm**: Computes C_ij = 0.5 * (∂M/∂q_k[:,j] + ∂M/∂q_j[:,k] - v) * q̇_k where v contains ∂M_jk/∂q_i
+        # • **Returns**: n×n Coriolis matrix C(q,q̇)
+        # • **Computational complexity**: O(n²) - more efficient
+        # • **Status**: This is the improved version
+        """
+        M: n×n SX or MX, inertia as a function of q
+        q, qdot: n×1
+        returns: n×n, C(q,qdot)
+        """
+        n = q.size1()
+        dM = [ca.reshape(ca.jacobian(ca.vec(M), q[k]), M.shape) for k in range(n)]  # list of n matrices
+        C = ca.SX.zeros(n, n) if isinstance(M, ca.SX) else ca.MX.zeros(n, n)
+
+        for j in range(n):
+            col = 0
+            for k in range(n):
+                # vector v with entries v_i = ∂M_{jk}/∂q_i
+                v = ca.vertcat(*[dM[i][j, k] for i in range(n)])
+                col += 0.5 * (dM[k][:, j] + dM[j][:, k] - v) * q_dot[k]
+            C[:, j] = col
+        return C
+
+    def _coriolis_times_qdot(self, M, q, qdot):
+        # • **Method**: Energy-based approach using Lagrangian mechanics
+        # • **Algorithm**: Computes Ṁq̇ - 0.5 * ∇_q(q̇ᵀMq̇) directly
+        # • **Returns**: n×1 vector C(q,q̇)q̇ (not the full matrix)
+        # • **Computational complexity**: O(n²) - most efficient when you only need Cq̇
+        # • **Status**: Most efficient for forward dynamics
+
+        """
+        M: n×n SX or MX, inertia as a function of q
+        q, qdot: n×1
+        returns: n×1, C(q,qdot) @ qdot
+        """
+        n = q.size1()
+        # tensor of partials dM/dq_k
+        dM = [ca.reshape(ca.jacobian(ca.vec(M), q[k]), M.shape) for k in range(n)]
+        Mdot = sum(dM[k] * qdot[k] for k in range(n))
+        _2T = ca.mtimes([qdot.T, M, qdot])            # scalar, kinetic term 2T
+        grad_T = ca.gradient(_2T, q)                  # n×1
+        return Mdot @ qdot - 0.5 * grad_T
+
     def _build_gravity_term(self, P, q):
         g_q = ca.gradient(P, q)
         return g_q
@@ -669,8 +712,11 @@ class RobotDynamics(object):
 
     def _build_forward_dynamics(self, D, C, q_dot, g, B, tau, J_tip, F_payload):
         tau_payload = J_tip.T @ F_payload          # n×1
-        tau_hat =  g + B + tau_payload #C@q_dot + g + B #+ tau_payload
-        qdd = ca.solve(D, tau - tau_hat) # qdd = ca.inv(D)@(tau - tau_hat)
+        tau_hat =  C@q_dot + g + B + tau_payload # collect non-inertial torques
+         # solve D(q)·q̈ = τ - τ̂  for q̈
+         # using a linear solver is more stable than inverting D directly
+         # especially for larger systems.
+        qdd = ca.solve(D, tau - tau_hat)
         return qdd
 
     def forward_simulation(self):
@@ -713,10 +759,10 @@ class RobotDynamics(object):
         F_ext = ca.SX.sym('F_ext', 6)
     
         # Base origin in WORLD
-        base_T  = plucker.XT(base_pose[0:3],  base_pose[3:6])
-        world_T = plucker.XT(world_pose[0:3], world_pose[3:6])
-        p0_X_world     = plucker.spatial_mtimes(base_T, world_T)     # works for both fixed & floating
-        _, _, p_base_W = plucker.spatial_to_homogeneous(p0_X_world)
+        base_T  = Transformation.T_from_xyz_rpy(base_pose[0:3],  base_pose[3:6])
+        world_T = Transformation.T_from_xyz_rpy(world_pose[0:3], world_pose[3:6])
+        p0_X_world     = world_T @ base_T     # works for both fixed & floating
+        p_base_W = p0_X_world[0:3, 3]  # position of base origin in world
     
         # Initialize total inertial force and torque (rate of change of momentum)
         total_inertial_force = ca.SX.zeros(3, 1)
@@ -816,7 +862,8 @@ class RobotDynamics(object):
         self.B = self._build_friction_term(fv_coeff, fs_coeff , q_dot)
         
         # Coriolis matrix is derived from the inertia matrix and joint velocities
-        self.C = self._build_coriolis_centrifugal_matrix(q, q_dot, self.D)
+        self.C = self._coriolis_matrix(self.D, q, q_dot)
+
         self.D_dot = self._build_D_dot(q, q_dot, self.D)
         self.N = self._build_N(q, q_dot, self.D)
         self.id_D, self.id_C, self.id_K, self.id_P, self.id_g, self.Y, self.id_theta, self.physical_plausibility_matrices = self._build_sys_regressor(q, q_dot, q_dotdot)
