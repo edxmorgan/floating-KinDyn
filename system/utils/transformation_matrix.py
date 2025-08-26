@@ -31,6 +31,37 @@ def T_from_xyz_rpy(xyz, rpy):
     T[0:3, 3] = t
     return T
 
+def vee(omega_hat):
+    return ca.vertcat(
+        omega_hat[2, 1],
+        omega_hat[0, 2],
+        omega_hat[1, 0]
+    )
+
+def T_revolute(xyz, rpy, axis, qval):
+    # parent to joint origin
+    T_pj = T_from_xyz_rpy(xyz, rpy)
+    # rotation about joint axis in joint frame
+    ax = ca.vertcat(axis[0], axis[1], axis[2])
+    ax = ax / ca.norm_2(ax)
+    # Rodrigues' rotation formula
+    K = ca.skew(ax)
+    I3 = ca.SX.eye(3)
+    Rq = I3 + ca.sin(qval) * K + (1 - ca.cos(qval)) * (K @ K)
+    T_q = ca.SX.eye(4)
+    T_q[0:3, 0:3] = Rq
+    return T_pj @ T_q
+
+def T_prismatic(xyz, rpy, axis, qval):
+    # parent to joint origin
+    T_pj = T_from_xyz_rpy(xyz, rpy)
+    ax = ca.vertcat(axis[0], axis[1], axis[2])
+    ax = ax / ca.norm_2(ax)
+    t = qval * ax
+    T_q = ca.SX.eye(4)
+    T_q[0:3, 3] = t
+    return T_pj @ T_q
+
 def euler_to_spatial_rate_T(phi, theta, psi):
     sφ, cφ = ca.sin(phi),  ca.cos(phi)
     sθ, cθ = ca.sin(theta), ca.cos(theta)
@@ -49,13 +80,6 @@ def euler_to_body_rate_T(phi, theta, psi):
     row3 = ca.horzcat(     sθ,   0,   1 )
     return ca.vertcat(row1, row2, row3)
 
-def vee(omega_hat):
-    return ca.vertcat(
-        omega_hat[2, 1],
-        omega_hat[0, 2],
-        omega_hat[1, 0]
-    )
-
 def analytic_to_geometric(Ja, T):
     """
     Convert a 6×n analytic Jacobian (XYZ Euler) to geometric.
@@ -66,35 +90,6 @@ def analytic_to_geometric(Ja, T):
     Jθ = Ja[3:6, :]                  # Euler‑rate rows → map
     Jω = T @ Jθ                      # angular velocity rows
     return ca.vertcat(Jv, Jω)        # 6×n geometric Jacobian
-
-def T_revolute(xyz, rpy, axis, qval):
-    # parent to joint origin
-    T_pj = T_from_xyz_rpy(xyz, rpy)
-    # rotation about joint axis in joint frame
-    ax = ca.vertcat(axis[0], axis[1], axis[2])
-    ax = ax / ca.norm_2(ax)
-    # Rodrigues
-    a_x, a_y, a_z = ax[0], ax[1], ax[2]
-    K = ca.vertcat(
-        ca.hcat([0,   -a_z,  a_y]),
-        ca.hcat([a_z,   0,  -a_x]),
-        ca.hcat([-a_y, a_x,   0 ]),
-    )
-    I3 = ca.SX.eye(3)
-    Rq = I3 + ca.sin(qval) * K + (1 - ca.cos(qval)) * (K @ K)
-    T_q = ca.SX.eye(4)
-    T_q[0:3, 0:3] = Rq
-    return T_pj @ T_q
-
-def T_prismatic(xyz, rpy, axis, qval):
-    # parent to joint origin
-    T_pj = T_from_xyz_rpy(xyz, rpy)
-    ax = ca.vertcat(axis[0], axis[1], axis[2])
-    ax = ax / ca.norm_2(ax)
-    t = qval * ax
-    T_q = ca.SX.eye(4)
-    T_q[0:3, 3] = t
-    return T_pj @ T_q
 
 def rotation_matrix_to_euler(R, order='zyx'):
     """

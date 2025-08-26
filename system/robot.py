@@ -183,16 +183,10 @@ class RobotDynamics(object):
         icom_X_0s = [] # transformation of center of mass i wrt base origin
         
         base_T = Transformation.T_from_xyz_rpy(base_xyz, base_rpy)
-        world_T = Transformation.T_from_xyz_rpy(world_xyz, world_rpy)
+        world_T = Transformation.T_from_xyz_rpy(world_xyz, world_rpy) if floating_base else ca.DM.eye(4)
+        i_X_0 = world_T @ base_T
         for i in range(0, n_joints):
-            if i != 0:
-                i_X_0 = i_X_0 @ i_X_p[i]
-            else:
-                if floating_base:
-                    p0_X_world = world_T @base_T
-                    i_X_0 = p0_X_world @ i_X_p[i]
-                else:
-                    i_X_0 = base_T @ i_X_p[i]
+            i_X_0 = i_X_0 @ i_X_p[i]
                     
             c_i = c_parms[i]
             com_X_i = Transformation.T_from_xyz_rpy(c_i, [0,0,0])
