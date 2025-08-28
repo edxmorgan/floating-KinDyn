@@ -822,7 +822,12 @@ class RobotDynamics(object):
         W_base = ca.vertcat(base_f, base_τ)
 
         return W_base
-
+    
+    def FIM(self):
+        pass
+    
+    def CRB(self):
+        pass
 
     def build_model(self, root, tip, floating_base=False):
         """
