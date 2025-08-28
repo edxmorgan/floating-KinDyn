@@ -45,9 +45,9 @@ class RobotDynamics(object):
     def get_joint_info(self, root, tip):
         """Using an URDF to extract joint information, i.e list of
         joints, actuated names and upper and lower limits."""
-        chain = self.robot_desc.get_chain(root, tip)
         if self.robot_desc is None:
             raise ValueError('Robot description not loaded from urdf')
+        chain = self.robot_desc.get_chain(root, tip)
 
         joint_list = []
         upper = []
@@ -102,7 +102,8 @@ class RobotDynamics(object):
         n_joints = self.get_n_joints(root, tip)
         chain = self.robot_desc.get_chain(root, tip)
         i_X_p = []   # collect transforms from child link origin to parent link origin
-        tip_offset = ca.DM.eye(6)
+        tip_offset = ca.DM.eye(4)
+        XT_prev = ca.DM.eye(4)
         prev_joint = None
         i = 0
         
@@ -118,42 +119,43 @@ class RobotDynamics(object):
         m_p = ca.SX.sym("m_p") # payload mass
         
         for item in chain:
-            if item in self.robot_desc.joint_map:
-                joint = self.robot_desc.joint_map[item]
+            if item not in self.robot_desc.joint_map:
+                continue
+            joint = self.robot_desc.joint_map[item]
 
-                if joint.type == "fixed":
-                    if prev_joint == "fixed":
-                        XT_prev = XT_prev @ Transformation.T_from_xyz_rpy(joint.origin.xyz, joint.origin.rpy)
-                    else:
-                        XT_prev = Transformation.T_from_xyz_rpy(
-                            joint.origin.xyz,
-                            joint.origin.rpy)
-
-                elif joint.type == "prismatic":
-                    XJT = Transformation.T_prismatic(
+            if joint.type == "fixed":
+                if prev_joint == "fixed":
+                    XT_prev = XT_prev @ Transformation.T_from_xyz_rpy(joint.origin.xyz, joint.origin.rpy)
+                else:
+                    XT_prev = Transformation.T_from_xyz_rpy(
                         joint.origin.xyz,
-                        joint.origin.rpy,
-                        joint.axis,
-                        q[i])
-                    if prev_joint == "fixed":
-                        XJT = XT_prev @ XJT
-                    i_X_p.append(XJT)
-                    i += 1
+                        joint.origin.rpy)
 
-                elif joint.type in ["revolute", "continuous"]:
-                    XJT = Transformation.T_revolute(
-                        joint.origin.xyz,
-                        joint.origin.rpy,
-                        joint.axis,
-                        q[i])
-                    if prev_joint == "fixed":
-                        XJT = XT_prev @ XJT
-                    i_X_p.append(XJT)
-                    i += 1
+            elif joint.type == "prismatic":
+                XJT = Transformation.T_prismatic(
+                    joint.origin.xyz,
+                    joint.origin.rpy,
+                    joint.axis,
+                    q[i])
+                if prev_joint == "fixed":
+                    XJT = XT_prev @ XJT
+                i_X_p.append(XJT)
+                i += 1
 
-                prev_joint = joint.type
-                if joint.child == tip and joint.type == "fixed":
-                    tip_offset = XT_prev
+            elif joint.type in ["revolute", "continuous"]:
+                XJT = Transformation.T_revolute(
+                    joint.origin.xyz,
+                    joint.origin.rpy,
+                    joint.axis,
+                    q[i])
+                if prev_joint == "fixed":
+                    XJT = XT_prev @ XJT
+                i_X_p.append(XJT)
+                i += 1
+
+            prev_joint = joint.type
+            if joint.child == tip and joint.type == "fixed":
+                tip_offset = XT_prev
         return i_X_p, tip_offset, c_parms, m_params, I_b_mats, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p, q, q_dot, q_dotdot, tau
 
     def _kinematics(self, root, tip, floating_base = False):
@@ -171,11 +173,13 @@ class RobotDynamics(object):
         world_x = ca.SX.sym('world_x') 
         world_y = ca.SX.sym('world_y')
         world_z = ca.SX.sym('world_z')
-        world_thet = ca.SX.sym('world_thet')
-        world_phi = ca.SX.sym('world_phi')
-        world_psi = ca.SX.sym('world_psi')
+        
+        world_roll  = ca.SX.sym('world_roll')
+        world_pitch = ca.SX.sym('world_pitch')
+        world_yaw   = ca.SX.sym('world_yaw')
+        world_rpy   = ca.vertcat(world_roll, world_pitch, world_yaw)
+
         world_xyz = ca.vertcat(world_x, world_y, world_z)
-        world_rpy = ca.vertcat(world_phi, world_thet, world_psi)
         world_pose = ca.vertcat(world_xyz, world_rpy)
 
         i_X_p, tip_offset, c_parms, m_params, I_b_mats, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p, q, q_dot, q_dotdot, tau = self._model_calculation(root, tip)
