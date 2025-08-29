@@ -164,12 +164,19 @@ class RobotDynamics(object):
             raise ValueError('Robot description not loaded from urdf')
 
         n_joints = self.get_n_joints(root, tip)
-        
+
+        i_X_p, tip_offset, c_parms, m_params, I_b_mats, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p, q, q_dot, q_dotdot, tau = self._model_calculation(root, tip)
+        i_X_0s = [] # transformation of joint i wrt base origin
+        icom_X_0s = [] # transformation of center of mass i wrt base origin
+
         base_xyz = ca.SX.sym('base_xyz', 3) # manipulator mount link xyz wrt floating body origin 
         base_rpy = ca.SX.sym('base_rpy', 3) # manipulator mount link rpy wrt floating body origin  
         base_pose = ca.vertcat(base_xyz, base_rpy)
 
-        # floaing pose in world coordinates
+        # this is the actual base of the manipulator
+        base_T = Transformation.T_from_xyz_rpy(base_xyz, base_rpy)
+
+        # floaing pose in world coordinates : this should be zeros for dynamics. for kinematics purpose , it maybe useful
         world_x = ca.SX.sym('world_x') 
         world_y = ca.SX.sym('world_y')
         world_z = ca.SX.sym('world_z')
@@ -182,12 +189,8 @@ class RobotDynamics(object):
         world_xyz = ca.vertcat(world_x, world_y, world_z)
         world_pose = ca.vertcat(world_xyz, world_rpy)
 
-        i_X_p, tip_offset, c_parms, m_params, I_b_mats, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p, q, q_dot, q_dotdot, tau = self._model_calculation(root, tip)
-        i_X_0s = [] # transformation of joint i wrt base origin
-        icom_X_0s = [] # transformation of center of mass i wrt base origin
-        
-        base_T = Transformation.T_from_xyz_rpy(base_xyz, base_rpy)
         world_T = Transformation.T_from_xyz_rpy(world_xyz, world_rpy) if floating_base else ca.DM.eye(4)
+
         i_X_0 = world_T @ base_T
         for i in range(0, n_joints):
             i_X_0 = i_X_0 @ i_X_p[i]
@@ -199,6 +202,8 @@ class RobotDynamics(object):
             i_X_0s.append(i_X_0)  # transformation of joint i wrt base origin
 
         end_i_X_0 = i_X_0 @ tip_offset # end-effector wrt base origin
+        com_payload_tip = Transformation.T_from_xyz_rpy(r_com_body, [0,0,0])
+        icom_X_0s.append(end_i_X_0 @ com_payload_tip) #payload com contribution
         i_X_0s.append(end_i_X_0)
 
         R_symx, Fks, qFks, geo_J, body_J, anlyt_J = self._compute_Fk_and_jacobians(q, i_X_0s)
@@ -270,7 +275,7 @@ class RobotDynamics(object):
             body_J.append(Jb)
         return R_symx, Fks, qFks, geo_J, body_J, anlyt_J
 
-    def approximate_workspace(self, root, tip, joint_limits, base_T, floating_base=False, num_samples=100000):
+    def approximate_workspace(self, root, tip, joint_limits, in_base_coordinate, floating_base=False, num_samples=100000):
         """
         fk_func: a function that takes a vector of joint angles
                 and returns the [x, y, z] end-effector position.
@@ -290,7 +295,7 @@ class RobotDynamics(object):
 
         # collect points for plotting
         positions = np.zeros((num_samples, 3))
-        world_origin = ca.DM.zeros(6,1)
+        in_world_coordinate = ca.DM.zeros(6,1)
 
         for i in range(num_samples):
             # Sample joint angles
@@ -300,7 +305,7 @@ class RobotDynamics(object):
                 for j in range(n_joints)
             ]
             
-            pose = internal_fk_eval_euler(q_samples, base_T, world_origin)
+            pose = internal_fk_eval_euler(q_samples, in_base_coordinate, in_world_coordinate)
 
             x = pose[0]
             y = pose[1]
@@ -470,15 +475,15 @@ class RobotDynamics(object):
             Jω_i = self.kinematic_dict['geo_J'][i][3:6, :]
             
             R_i = self.kinematic_dict['R_symx'][i]
-            mrc_world = R_i @ m_rci_id
-            cross    = Jv_i.T @ ca.skew(mrc_world) @ Jω_i
+            mrc_base = R_i @ m_rci_id
+            cross    = Jv_i.T @ ca.skew(mrc_base) @ Jω_i
             
-            I_i_world = R_i @ I_i_id @ R_i.T # tranform inertia from frame i to world frame
-            D_i = m_i_id * (Jv_i.T @ Jv_i) + (Jω_i.T@I_i_world@Jω_i) - (cross + cross.T)
+            I_i_base = R_i @ I_i_id @ R_i.T # tranform inertia from frame i to base frame
+            D_i = m_i_id * (Jv_i.T @ Jv_i) + (Jω_i.T@I_i_base@Jω_i) - (cross + cross.T)
             K_i = 0.5 * q_dot.T @D_i@ q_dot
             
             # define lumped parameters linear in potential energy
-            p_i = self.kinematic_dict['Fks'][i][0:3]  # Position of joint i in world coordinates
+            p_i = self.kinematic_dict['Fks'][i][0:3]  # Position of joint i in base coordinates
             
             Y_Pi = ca.horzcat(vec_g.T @ p_i, (R_i.T @ vec_g).T)   # shape (1, 1+3)
             P_i = Y_Pi @ ca.vertcat(m_i_id, m_rci_id)
@@ -567,7 +572,7 @@ class RobotDynamics(object):
         for i in range(n_joints):
             m_i = m_params[i]
             Ib_mat_i = self.kinematic_dict['I_b_mats'][i]
-            R_i      = self.kinematic_dict['R_symx'][i]      # 3×3 (rotation of link i in world)
+            R_i      = self.kinematic_dict['R_symx'][i]      # 3×3 (rotation of link i in base)
             
             Jv_com_i = self.kinematic_dict['com_geo_J'][i][0:3, :]
             Jω_com_i = self.kinematic_dict['com_geo_J'][i][3:6, :]
@@ -583,7 +588,7 @@ class RobotDynamics(object):
         for i in range(n_joints):
             m_i = m_params[i] # Mass of the link
             i_com_Fks = self.kinematic_dict['com_Fks'][i]
-            p_ci = i_com_Fks[0:3]  # Position of the center of mass of link i in world coordinates
+            p_ci = i_com_Fks[0:3]  # Position of the center of mass of link i in base coordinates
             P += m_i * vec_g.T @ p_ci
         return P
 
@@ -700,16 +705,16 @@ class RobotDynamics(object):
 
     def _payload_wrench_from_mass(self, m_p, r_com_body):
         # r_com_body: 3x1, COM in tool (end-effector) frame
-        # Uses last link rotation to world and gravity vec_g from parameters.
-        R_e = self.kinematic_dict["R_symx"][-1]    # 3x3, tool->world
+        # Uses last link rotation to base and gravity vec_g from parameters.
+        R_e = self.kinematic_dict["R_symx"][-1]    # 3x3, tool->base
         _, _, _, _, _, vec_g, *_ = self.kinematic_dict['parameters']
-        f = m_p * vec_g                             # 3x1, world force
-        r_w = R_e @ r_com_body                      # 3x1, COM in world
-        τ = ca.cross(r_w, f)                      # 3x1, moment at tool origin
+        f = m_p * vec_g                             # 3x1, base force
+        r_w = R_e @ r_com_body                      # 3x1, COM in base
+        τ = ca.cross(r_w, f)                      # 3x1, tool moment about base origin
         return ca.vertcat(f, τ)                   # 6x1
 
-    def _build_forward_dynamics(self, D, Cq_dot, g, B, tau, J_tip, F_payload):
-        tau_payload = J_tip.T @ F_payload          # n×1
+    def _build_forward_dynamics(self, D, Cq_dot, g, B, tau, J_tip, F_payload_base):
+        tau_payload = J_tip.T @ F_payload_base          # n×1
         tau_hat =  Cq_dot + g + B + tau_payload # collect non-inertial torques
          # solve D(q)·q̈ = τ - τ̂  for q̈
          # using a linear solver is more stable than inverting D directly
@@ -734,34 +739,21 @@ class RobotDynamics(object):
         F_next = ca.Function('Mnext', [x, tau, dt, rigid_p], [x_next])
         return F_next
     
-    def _build_inverse_dynamics(self, D, C, q_dotdot, q_dot, g, B, J_tip, F_payload):
-        tau_payload = J_tip.T @ F_payload
+    def _build_inverse_dynamics(self, D, C, q_dotdot, q_dot, g, B, J_tip, F_payload_base):
+        tau_payload = J_tip.T @ F_payload_base
         joint_torque = D@q_dotdot + C@q_dot + g + B + tau_payload
         return joint_torque
 
-    def _compute_base_reaction(self):
+    def _compute_base_reaction_global_balance(self, F_payload_base):
         """
         Computes the manipulator reaction to the floating base at the base origin.
         returns the wrench from the base onto the arm.
         The floating base(AUV) feels the equal and opposite wrench.
         """
         # Get symbolic variables from the built model
-        params = self.kinematic_dict['parameters']
-        q, q_dot, q_ddot = params[8], params[9], params[10]
-        vec_g = params[5]
-        base_pose        = params[12]
-        world_pose       = params[13]
+        c_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_body, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
         n_joints = self.kinematic_dict['n_joints']
 
-        # External wrench [f; τ]
-        F_ext = ca.SX.sym('F_ext', 6)
-    
-        # Base origin in WORLD
-        base_T  = Transformation.T_from_xyz_rpy(base_pose[0:3],  base_pose[3:6])
-        world_T = Transformation.T_from_xyz_rpy(world_pose[0:3], world_pose[3:6])
-        p0_X_world     = world_T @ base_T     # works for both fixed & floating
-        p_base_W = p0_X_world[0:3, 3]  # position of base origin in world
-    
         # Initialize total inertial force and torque (rate of change of momentum)
         total_inertial_force = ca.SX.zeros(3, 1)
         total_inertial_torque = ca.SX.zeros(3, 1)  # about the base origin
@@ -775,28 +767,27 @@ class RobotDynamics(object):
             # Get link parameters
             m_i = self.kinematic_dict['parameters'][1][i]
             I_ci = self.kinematic_dict['I_b_mats'][i] # Inertia tensor in link's CoM frame
-            R_i = self.kinematic_dict['com_R_symx'][i] # Rotation of CoM frame wrt world
-            p_ci = self.kinematic_dict['com_Fks'][i][0:3] # Position of CoM wrt world
-            r_ci  = p_ci - p_base_W                       # moment arm about BASE origin
+            R_i = self.kinematic_dict['com_R_symx'][i] # Rotation of CoM frame wrt base
+            p_ci = self.kinematic_dict['com_Fks'][i][0:3] # Position of CoM wrt base
 
             # Get Jacobians for the center of mass
             J_com_i = self.kinematic_dict['com_geo_J'][i]
             Jv_ci, Jw_ci = J_com_i[0:3, :], J_com_i[3:6, :]
 
             # Calculate linear and angular acceleration of the CoM using jtimes for J_dot * q_dot
-            a_ci = Jv_ci @ q_ddot + ca.jtimes(Jv_ci, q, q_dot)@q_dot
-            alpha_i = Jw_ci @ q_ddot + ca.jtimes(Jw_ci, q, q_dot)@q_dot
+            a_ci = Jv_ci @ q_dotdot + ca.jtimes(Jv_ci, q, q_dot)@q_dot
+            alpha_i = Jw_ci @ q_dotdot + ca.jtimes(Jw_ci, q, q_dot)@q_dot
             
             # Angular velocity of the link
             w_i = Jw_ci @ q_dot
 
-            I_world_i = R_i @ I_ci @ R_i.T
+            I_base_i = R_i @ I_ci @ R_i.T
             
             # Rate of change of linear momentum for link i
             f_in   = m_i * a_ci
             # Rate of change of angular momentum for link i, computed about the base origin
-            # dL/dt = r x (m*a) + I_world*alpha + w x (I_world*w)
-            τ_in   = ca.cross(r_ci, f_in) + I_world_i @ alpha_i + ca.cross(w_i, I_world_i @ w_i)
+            # dL/dt = r x (m*a) + I_base_i*alpha + w x (I_base_i*w)
+            τ_in   = ca.cross(p_ci, f_in) + I_base_i @ alpha_i + ca.cross(w_i, I_base_i @ w_i)
 
             total_inertial_force  += f_in
             total_inertial_torque += τ_in
@@ -804,19 +795,16 @@ class RobotDynamics(object):
             # Gravity force and torque contribution from link i
             f_g = m_i * vec_g
             total_gravity_force  += f_g
-            total_gravity_torque += ca.cross(r_ci, f_g)
+            total_gravity_torque += ca.cross(p_ci, f_g)
 
-        # Wrench from external force, transformed to the base frame
-        f_ext = F_ext[0:3]
-        τ_ext_tip = F_ext[3:6]
-        p_tip = self.kinematic_dict['Fks'][-1][0:3]
-        r_tip     = p_tip - p_base_W
-        τ_ext = ca.cross(r_tip, f_ext) + τ_ext_tip
-        
+        # Wrench from tip force in the base frame
+        f_tip = F_payload_base[0:3]
+        τ_tip = F_payload_base[3:6]
+
         # From Newton-Euler: Σ F_external = dP/dt  => F_base + F_gravity + F_ext = F_inertial
-        base_f  = total_inertial_force  - total_gravity_force  - f_ext
+        base_f = total_inertial_force - total_gravity_force - f_tip
         # From Newton-Euler: Σ τ_external = dL/dt => τ_base + τ_gravity + τ_ext = τ_inertial
-        base_τ = total_inertial_torque - total_gravity_torque - τ_ext
+        base_τ = total_inertial_torque - total_gravity_torque - τ_tip
     
         # Combine into the final base wrench vector
         W_base = ca.vertcat(base_f, base_τ)
@@ -876,8 +864,7 @@ class RobotDynamics(object):
         # input. power of the system
         self.H_dot = q_dot.T@tau
         
-        self.base_Rct = self._compute_base_reaction()
-
+        
         # Step 5: Perform assertions to ensure matrix dimensions are consistent
         assert self.D.shape == (n_joints, n_joints), f"Inertia matrix D has incorrect shape: {self.D.shape}"
         assert self.C.shape == (n_joints, n_joints), f"Coriolis matrix C has incorrect shape: {self.C.shape}"
@@ -885,19 +872,22 @@ class RobotDynamics(object):
         assert self.D_dot.shape == (n_joints, n_joints), f"matrix D_dot has incorrect shape: {self.D_dot.shape}"
         assert self.N.shape == (n_joints, n_joints), f"matrix N has incorrect shape: {self.N.shape}"
         assert self.g.shape == (n_joints, 1), f"Gravity vector g has incorrect shape: {self.g.shape}"
+        
+        F_payload_base = self._payload_wrench_from_mass( m_p, r_com_body)
+        
+        self.base_Rct = self._compute_base_reaction_global_balance(F_payload_base)
         assert self.base_Rct.shape == (6, 1), f"base_Rct vector has incorrect shape: {self.base_Rct.shape}"
         
-        F_payload = self._payload_wrench_from_mass( m_p, r_com_body)
-        J_tip = self.kinematic_dict["geo_J"][-1]   # 6×n geometric Jacobian at the tool
-        self.qdd = self._build_forward_dynamics(self.D, self.Cqdot, self.g, self.B, tau, J_tip, F_payload)
+        tip_com_J = self.kinematic_dict["com_geo_J"][-1]   # 6×n geometric Jacobian at the tool
+        self.qdd = self._build_forward_dynamics(self.D, self.Cqdot, self.g, self.B, tau, tip_com_J, F_payload_base)
         assert self.qdd.shape == (n_joints, 1), f"Forward dynamics vector qdd has incorrect shape: {self.qdd.shape}"
 
         self.F_next = self.forward_simulation()
         
-        self.joint_torque = self._build_inverse_dynamics(self.D, self.C, q_dotdot, q_dot, self.g, self.B, J_tip, F_payload)
+        self.joint_torque = self._build_inverse_dynamics(self.D, self.C, q_dotdot, q_dot, self.g, self.B, tip_com_J, F_payload_base)
         assert self.joint_torque.shape == (n_joints, 1), f"Inverse dynamics vector qdd has incorrect shape: {self.joint_torque.shape}"
 
-        return self.kinematic_dict, self.K, self.P, self.L, self.D, self.C, self.g, self.B, self.qdd, self.joint_torque, self._sys_id_coeff, F_payload
+        return self.kinematic_dict, self.K, self.P, self.L, self.D, self.C, self.g, self.B, self.qdd, self.joint_torque, self._sys_id_coeff, F_payload_base
 
     @property
     @require_built_model
