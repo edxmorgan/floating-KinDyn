@@ -778,7 +778,27 @@ class RobotDynamics(object):
         x_next = intg(x0=x, u=tau, p=p)['xf']
         F_next = ca.Function('Mnext', [x, tau, dt, rigid_p], [x_next])
         return F_next
-    
+
+    def forward_simulation_reg(self):
+        cm_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
+        dt = ca.SX.sym('dt')
+        rigid_p = ca.vertcat(self._sys_id_coeff["masses_id_syms_vertcat"],
+                              self._sys_id_coeff["first_moments_id_vertcat"], 
+                              self._sys_id_coeff["inertias_id_vertcat"], 
+                              fv_coeff, fs_coeff, vec_g, r_com_payload, m_p, base_pose, world_pose)
+        p = ca.vertcat(rigid_p, dt)
+        x    = ca.vertcat(q,  q_dot)
+        xdot = ca.vertcat(q_dot, self.qdd_reg) * dt
+        dae  = {'x': x, 'ode': xdot, 'p': p, 'u': tau}
+        opts = {
+            'simplify': True,
+            'number_of_finite_elements': 30,
+            }
+        intg = ca.integrator('intg', 'rk', dae, 0, 1, opts)
+        x_next = intg(x0=x, u=tau, p=p)['xf']
+        F_next = ca.Function('Mnext', [x, tau, dt, rigid_p], [x_next])
+        return F_next
+
     def _build_inverse_dynamics(self, D, C, q_dotdot, q_dot, g, B, J_tip, F_payload_base):
         tau_payload = J_tip.T @ F_payload_base
         joint_torque = D@q_dotdot + C@q_dot + g + B + tau_payload
@@ -922,7 +942,12 @@ class RobotDynamics(object):
         self.qdd = self._build_forward_dynamics(self.D, self.Cqdot, self.g, self.B, tau, tip_com_J, F_payload_base)
         assert self.qdd.shape == (n_joints, 1), f"Forward dynamics vector qdd has incorrect shape: {self.qdd.shape}"
 
+        self.Cqdot_reg = self._coriolis_times_qdot(self.id_D, q, q_dot)
+
+        self.qdd_reg = self._build_forward_dynamics(self.id_D, self.Cqdot_reg, self.id_g, self.B, tau, tip_com_J, F_payload_base)
+
         self.F_next = self.forward_simulation()
+        self.F_next_reg = self.forward_simulation_reg()
         
         self.joint_torque = self._build_inverse_dynamics(self.D, self.C, q_dotdot, q_dot, self.g, self.B, tip_com_J, F_payload_base)
         assert self.joint_torque.shape == (n_joints, 1), f"Inverse dynamics vector qdd has incorrect shape: {self.joint_torque.shape}"
