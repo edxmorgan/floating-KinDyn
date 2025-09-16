@@ -796,7 +796,7 @@ class RobotDynamics(object):
             }
         intg = ca.integrator('intg', 'rk', dae, 0, 1, opts)
         x_next = intg(x0=x, u=tau, p=p)['xf']
-        F_next = ca.Function('Mnext', [x, tau, dt, rigid_p], [x_next])
+        F_next = ca.Function('Mnext_reg', [x, tau, dt, rigid_p], [x_next])
         return F_next
 
     def _build_inverse_dynamics(self, D, C, q_dotdot, q_dot, g, B, J_tip, F_payload_base):
