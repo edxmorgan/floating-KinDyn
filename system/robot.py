@@ -762,7 +762,7 @@ class RobotDynamics(object):
     #     qdd = ca.solve(D, tau - tau_hat)
     #     return qdd
 
-    def _build_forward_dynamics(self, D, Cq_dot, g, B, tau, J_tip, F_payload_base, mask, alpha=0.0):
+    def _build_forward_dynamics(self, q_dot, D, Cq_dot, g, B, tau, J_tip, F_payload_base, mask, alpha):
         """
         Forward dynamics with optional joint locking.
         mask: n×1 vector with 1 for locked joints, 0 for free.
@@ -777,21 +777,18 @@ class RobotDynamics(object):
 
         # selector
         S = ca.diag(mask)
-        q_dot = self.kinematic_dict['parameters'][9]  # qdot symbol
+        I = ca.SX.eye(S.size1())
 
         # precompute once
         Minv_tau = ca.solve(D, tau_tilde)
 
-        # A and b for locks
-        A = S @ ca.solve(D, S)
-        b = S @ Minv_tau
-        if alpha != 0.0:
-            b = b + alpha * (S @ q_dot)
+        # exact-on-locked, safe-on-free system
+        # A' = S M^{-1} S + (I - S)
+        # b  = S M^{-1} τ̃ + α S q̇
+        A = S @ ca.solve(D, S) + (I - S)
+        b = S @ Minv_tau + alpha * (S @ q_dot)
 
-        # regularized solve, avoids NaNs for zero or singular A
-        eps = 1e-9
-        lam = -ca.solve(A + eps * ca.SX.eye(A.size1()), b)
-
+        lam = -ca.solve(A, b)
         # constrained acceleration
         qdd = Minv_tau + ca.solve(D, S @ lam)
         return qdd
@@ -800,7 +797,7 @@ class RobotDynamics(object):
         cm_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
         dt = ca.SX.sym('dt')
         rigid_p = ca.vertcat(*cm_parms, *m_params, *I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, m_p, base_pose, world_pose)
-        p = ca.vertcat(rigid_p, dt, self.lock_mask)
+        p = ca.vertcat(rigid_p, dt, self.lock_mask, self.baumgarte_alpha)
         x    = ca.vertcat(q,  q_dot)
         xdot = ca.vertcat(q_dot, self.qdd) * dt
         dae  = {'x': x, 'ode': xdot, 'p': p, 'u': tau}
@@ -810,7 +807,7 @@ class RobotDynamics(object):
             }
         intg = ca.integrator('intg', 'rk', dae, 0, 1, opts)
         x_next = intg(x0=x, u=tau, p=p)['xf']
-        F_next = ca.Function('Mnext', [x, tau, dt, rigid_p, self.lock_mask], [x_next])
+        F_next = ca.Function('Mnext', [x, tau, dt, rigid_p, self.lock_mask, self.baumgarte_alpha], [x_next])
         return F_next
 
     def forward_simulation_reg(self):
@@ -820,7 +817,7 @@ class RobotDynamics(object):
                               self._sys_id_coeff["first_moments_id_vertcat"], 
                               self._sys_id_coeff["inertias_id_vertcat"], 
                               fv_coeff, fs_coeff, vec_g, r_com_payload, m_p, base_pose, world_pose)
-        p = ca.vertcat(rigid_p, dt, self.lock_mask)
+        p = ca.vertcat(rigid_p, dt, self.lock_mask, self.baumgarte_alpha)
         x    = ca.vertcat(q,  q_dot)
         xdot = ca.vertcat(q_dot, self.qdd_reg) * dt
         dae  = {'x': x, 'ode': xdot, 'p': p, 'u': tau}
@@ -830,7 +827,7 @@ class RobotDynamics(object):
             }
         intg = ca.integrator('intg', 'rk', dae, 0, 1, opts)
         x_next = intg(x0=x, u=tau, p=p)['xf']
-        F_next = ca.Function('Mnext_reg', [x, tau, dt, rigid_p, self.lock_mask], [x_next])
+        F_next = ca.Function('Mnext_reg', [x, tau, dt, rigid_p, self.lock_mask, self.baumgarte_alpha], [x_next])
         return F_next
 
     def _build_inverse_dynamics(self, D, C, q_dotdot, q_dot, g, B, J_tip, F_payload_base):
@@ -969,12 +966,16 @@ class RobotDynamics(object):
         tip_com_J = self.kinematic_dict["com_geo_J"][-1]   # 6×n geometric Jacobian at the tool
         
         self.lock_mask = ca.SX.sym('lock_mask', q.size1(), 1)  # 1 means locked
-        self.qdd = self._build_forward_dynamics(self.D, self.Cqdot, self.g, self.B, tau, tip_com_J, F_payload_base, self.lock_mask)
+        self.baumgarte_alpha = ca.SX.sym('baumgarte_alpha')  # baumgarte stability gain
+        self.qdd = self._build_forward_dynamics(q_dot, self.D, self.Cqdot, self.g,
+                                                self.B, tau, tip_com_J, F_payload_base, self.lock_mask, self.baumgarte_alpha)
+        
         assert self.qdd.shape == (n_joints, 1), f"Forward dynamics vector qdd has incorrect shape: {self.qdd.shape}"
 
         self.Cqdot_reg = self._coriolis_times_qdot(self.id_D, q, q_dot)
 
-        self.qdd_reg = self._build_forward_dynamics(self.id_D, self.Cqdot_reg, self.id_g, self.B, tau, tip_com_J, F_payload_base, self.lock_mask)
+        self.qdd_reg = self._build_forward_dynamics(q_dot, self.id_D, self.Cqdot_reg, self.id_g, 
+                                                    self.B, tau, tip_com_J, F_payload_base, self.lock_mask, self.baumgarte_alpha)
 
         self.F_next = self.forward_simulation()
         self.F_next_reg = self.forward_simulation_reg()
