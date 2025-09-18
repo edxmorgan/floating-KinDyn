@@ -767,7 +767,17 @@ class RobotDynamics(object):
         # especially for larger systems.
         # solve once
         Minv_tau = ca.solve(D, tau_tilde)
+        
+        tau_lock = self._lock_constraint_torque(q_dot, D, Minv_tau, mask, alpha)
 
+        # constrained acceleration
+        qdd = Minv_tau + ca.solve(D, tau_lock)
+        return qdd
+
+    def _lock_constraint_torque(self, q_dot, D, Minv_tau, mask, alpha=0.0):
+        """
+        Returns tau_lock, the generalized torque from the joint locks.
+        """
         # selector
         S = ca.diag(mask)
         I = ca.SX.eye(S.size1())
@@ -779,9 +789,8 @@ class RobotDynamics(object):
         b = S @ Minv_tau + alpha * (S @ q_dot)
 
         lam = -ca.solve(A, b)
-        # constrained acceleration
-        qdd = Minv_tau + ca.solve(D, S @ lam)
-        return qdd
+        tau_lock = S @ lam             # n×1
+        return tau_lock
 
     def forward_simulation(self):
         cm_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
