@@ -41,3 +41,12 @@ def is_skew_symmetric(A, tol=1e-9):
     """Numerical skew‑symmetry test: ‖A + Aᵀ‖∞ < tol."""
     return float(ca.norm_inf(A + A.T)) < tol
 
+def lock_mask_from_indices(n_joints, locked_idx):
+    """
+    locked_idx, iterable of joint indices to lock, zero based.
+    Returns an SX column vector of length n_joints with 1 for locked.
+    """
+    m = np.zeros((n_joints, 1))
+    for i in locked_idx:
+        m[i, 0] = 1.0
+    return ca.DM(m)  # DM is fine to pass at call time

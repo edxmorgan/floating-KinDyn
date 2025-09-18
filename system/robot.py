@@ -753,32 +753,54 @@ class RobotDynamics(object):
         τ = ca.cross(r_w, f)                      # 3x1, tool moment about base origin
         return ca.vertcat(f, τ)                   # 6x1
 
-    def _build_forward_dynamics(self, D, Cq_dot, g, B, tau, J_tip, F_payload_base):
-        tau_payload = J_tip.T @ F_payload_base          # n×1
-        tau_hat =  Cq_dot + g + B + tau_payload # collect non-inertial torques
-         # solve D(q)·q̈ = τ - τ̂  for q̈
-         # using a linear solver is more stable than inverting D directly
-         # especially for larger systems.
-        qdd = ca.solve(D, tau - tau_hat)
-        return qdd
+    # def _build_forward_dynamics(self, D, Cq_dot, g, B, tau, J_tip, F_payload_base):
+    #     tau_payload = J_tip.T @ F_payload_base          # n×1
+    #     tau_hat =  Cq_dot + g + B + tau_payload # collect non-inertial torques
+    #      # solve D(q)·q̈ = τ - τ̂  for q̈
+    #      # using a linear solver is more stable than inverting D directly
+    #      # especially for larger systems.
+    #     qdd = ca.solve(D, tau - tau_hat)
+    #     return qdd
 
-    @staticmethod
-    def lock_mask_from_indices(n_joints, locked_idx):
+    def _build_forward_dynamics(self, D, Cq_dot, g, B, tau, J_tip, F_payload_base, mask, alpha=0.0):
         """
-        locked_idx, iterable of joint indices to lock, zero based.
-        Returns an SX column vector of length n_joints with 1 for locked.
+        Forward dynamics with optional joint locking.
+        mask: n×1 vector with 1 for locked joints, 0 for free.
+        alpha: drift correction gain (0 = eq. 17, >0 = eq. 18).
         """
-        m = np.zeros((n_joints, 1))
-        for i in locked_idx:
-            m[i, 0] = 1.0
-        return ca.DM(m)  # DM is fine to pass at call time
+        tau_payload = J_tip.T @ F_payload_base
+        tau_hat = Cq_dot + g + B + tau_payload
+        tau_tilde = tau - tau_hat
+
+        # solve once
+        Minv_tau = ca.solve(D, tau_tilde)
+
+        # selector
+        S = ca.diag(mask)
+        q_dot = self.kinematic_dict['parameters'][9]  # qdot symbol
+
+        # precompute once
+        Minv_tau = ca.solve(D, tau_tilde)
+
+        # A and b for locks
+        A = S @ ca.solve(D, S)
+        b = S @ Minv_tau
+        if alpha != 0.0:
+            b = b + alpha * (S @ q_dot)
+
+        # regularized solve, avoids NaNs for zero or singular A
+        eps = 1e-9
+        lam = -ca.solve(A + eps * ca.SX.eye(A.size1()), b)
+
+        # constrained acceleration
+        qdd = Minv_tau + ca.solve(D, S @ lam)
+        return qdd
 
     def forward_simulation(self):
         cm_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
         dt = ca.SX.sym('dt')
         rigid_p = ca.vertcat(*cm_parms, *m_params, *I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, m_p, base_pose, world_pose)
-        lock_mask = ca.SX.sym('lock_mask', q.size1(), 1)
-        p = ca.vertcat(rigid_p, dt)
+        p = ca.vertcat(rigid_p, dt, self.lock_mask)
         x    = ca.vertcat(q,  q_dot)
         xdot = ca.vertcat(q_dot, self.qdd) * dt
         dae  = {'x': x, 'ode': xdot, 'p': p, 'u': tau}
@@ -788,7 +810,7 @@ class RobotDynamics(object):
             }
         intg = ca.integrator('intg', 'rk', dae, 0, 1, opts)
         x_next = intg(x0=x, u=tau, p=p)['xf']
-        F_next = ca.Function('Mnext', [x, tau, dt, rigid_p, lock_mask], [x_next])
+        F_next = ca.Function('Mnext', [x, tau, dt, rigid_p, self.lock_mask], [x_next])
         return F_next
 
     def forward_simulation_reg(self):
@@ -798,8 +820,7 @@ class RobotDynamics(object):
                               self._sys_id_coeff["first_moments_id_vertcat"], 
                               self._sys_id_coeff["inertias_id_vertcat"], 
                               fv_coeff, fs_coeff, vec_g, r_com_payload, m_p, base_pose, world_pose)
-        lock_mask = ca.SX.sym('lock_mask', q.size1(), 1)
-        p = ca.vertcat(rigid_p, dt)
+        p = ca.vertcat(rigid_p, dt, self.lock_mask)
         x    = ca.vertcat(q,  q_dot)
         xdot = ca.vertcat(q_dot, self.qdd_reg) * dt
         dae  = {'x': x, 'ode': xdot, 'p': p, 'u': tau}
@@ -809,7 +830,7 @@ class RobotDynamics(object):
             }
         intg = ca.integrator('intg', 'rk', dae, 0, 1, opts)
         x_next = intg(x0=x, u=tau, p=p)['xf']
-        F_next = ca.Function('Mnext_reg', [x, tau, dt, rigid_p, lock_mask], [x_next])
+        F_next = ca.Function('Mnext_reg', [x, tau, dt, rigid_p, self.lock_mask], [x_next])
         return F_next
 
     def _build_inverse_dynamics(self, D, C, q_dotdot, q_dot, g, B, J_tip, F_payload_base):
@@ -946,12 +967,14 @@ class RobotDynamics(object):
         assert self.base_Rct.shape == (6, 1), f"base_Rct vector has incorrect shape: {self.base_Rct.shape}"
         
         tip_com_J = self.kinematic_dict["com_geo_J"][-1]   # 6×n geometric Jacobian at the tool
-        self.qdd = self._build_forward_dynamics(self.D, self.Cqdot, self.g, self.B, tau, tip_com_J, F_payload_base)
+        
+        self.lock_mask = ca.SX.sym('lock_mask', q.size1(), 1)  # 1 means locked
+        self.qdd = self._build_forward_dynamics(self.D, self.Cqdot, self.g, self.B, tau, tip_com_J, F_payload_base, self.lock_mask)
         assert self.qdd.shape == (n_joints, 1), f"Forward dynamics vector qdd has incorrect shape: {self.qdd.shape}"
 
         self.Cqdot_reg = self._coriolis_times_qdot(self.id_D, q, q_dot)
 
-        self.qdd_reg = self._build_forward_dynamics(self.id_D, self.Cqdot_reg, self.id_g, self.B, tau, tip_com_J, F_payload_base)
+        self.qdd_reg = self._build_forward_dynamics(self.id_D, self.Cqdot_reg, self.id_g, self.B, tau, tip_com_J, F_payload_base, self.lock_mask)
 
         self.F_next = self.forward_simulation()
         self.F_next_reg = self.forward_simulation_reg()
