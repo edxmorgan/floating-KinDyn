@@ -762,10 +762,22 @@ class RobotDynamics(object):
         qdd = ca.solve(D, tau - tau_hat)
         return qdd
 
+    @staticmethod
+    def lock_mask_from_indices(n_joints, locked_idx):
+        """
+        locked_idx, iterable of joint indices to lock, zero based.
+        Returns an SX column vector of length n_joints with 1 for locked.
+        """
+        m = np.zeros((n_joints, 1))
+        for i in locked_idx:
+            m[i, 0] = 1.0
+        return ca.DM(m)  # DM is fine to pass at call time
+
     def forward_simulation(self):
         cm_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
         dt = ca.SX.sym('dt')
         rigid_p = ca.vertcat(*cm_parms, *m_params, *I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, m_p, base_pose, world_pose)
+        lock_mask = ca.SX.sym('lock_mask', q.size1(), 1)
         p = ca.vertcat(rigid_p, dt)
         x    = ca.vertcat(q,  q_dot)
         xdot = ca.vertcat(q_dot, self.qdd) * dt
@@ -776,7 +788,7 @@ class RobotDynamics(object):
             }
         intg = ca.integrator('intg', 'rk', dae, 0, 1, opts)
         x_next = intg(x0=x, u=tau, p=p)['xf']
-        F_next = ca.Function('Mnext', [x, tau, dt, rigid_p], [x_next])
+        F_next = ca.Function('Mnext', [x, tau, dt, rigid_p, lock_mask], [x_next])
         return F_next
 
     def forward_simulation_reg(self):
@@ -786,6 +798,7 @@ class RobotDynamics(object):
                               self._sys_id_coeff["first_moments_id_vertcat"], 
                               self._sys_id_coeff["inertias_id_vertcat"], 
                               fv_coeff, fs_coeff, vec_g, r_com_payload, m_p, base_pose, world_pose)
+        lock_mask = ca.SX.sym('lock_mask', q.size1(), 1)
         p = ca.vertcat(rigid_p, dt)
         x    = ca.vertcat(q,  q_dot)
         xdot = ca.vertcat(q_dot, self.qdd_reg) * dt
@@ -796,7 +809,7 @@ class RobotDynamics(object):
             }
         intg = ca.integrator('intg', 'rk', dae, 0, 1, opts)
         x_next = intg(x0=x, u=tau, p=p)['xf']
-        F_next = ca.Function('Mnext_reg', [x, tau, dt, rigid_p], [x_next])
+        F_next = ca.Function('Mnext_reg', [x, tau, dt, rigid_p, lock_mask], [x_next])
         return F_next
 
     def _build_inverse_dynamics(self, D, C, q_dotdot, q_dot, g, B, J_tip, F_payload_base):
@@ -870,12 +883,6 @@ class RobotDynamics(object):
         W_base = ca.vertcat(base_f, base_τ)
 
         return W_base
-    
-    def FIM(self):
-        pass
-    
-    def CRB(self):
-        pass
 
     def build_model(self, root, tip, floating_base=False):
         """
