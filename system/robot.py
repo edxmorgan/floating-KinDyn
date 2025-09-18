@@ -753,15 +753,6 @@ class RobotDynamics(object):
         τ = ca.cross(r_w, f)                      # 3x1, tool moment about base origin
         return ca.vertcat(f, τ)                   # 6x1
 
-    # def _build_forward_dynamics(self, D, Cq_dot, g, B, tau, J_tip, F_payload_base):
-    #     tau_payload = J_tip.T @ F_payload_base          # n×1
-    #     tau_hat =  Cq_dot + g + B + tau_payload # collect non-inertial torques
-    #      # solve D(q)·q̈ = τ - τ̂  for q̈
-    #      # using a linear solver is more stable than inverting D directly
-    #      # especially for larger systems.
-    #     qdd = ca.solve(D, tau - tau_hat)
-    #     return qdd
-
     def _build_forward_dynamics(self, q_dot, D, Cq_dot, g, B, tau, J_tip, F_payload_base, mask, alpha):
         """
         Forward dynamics with optional joint locking.
@@ -771,16 +762,15 @@ class RobotDynamics(object):
         tau_payload = J_tip.T @ F_payload_base
         tau_hat = Cq_dot + g + B + tau_payload
         tau_tilde = tau - tau_hat
-
+        # solve D(q)·q̈ = τ - τ̂  for q̈
+        # using a linear solver is more stable than inverting D directly
+        # especially for larger systems.
         # solve once
         Minv_tau = ca.solve(D, tau_tilde)
 
         # selector
         S = ca.diag(mask)
         I = ca.SX.eye(S.size1())
-
-        # precompute once
-        Minv_tau = ca.solve(D, tau_tilde)
 
         # exact-on-locked, safe-on-free system
         # A' = S M^{-1} S + (I - S)
