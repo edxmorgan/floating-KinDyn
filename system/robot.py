@@ -774,7 +774,7 @@ class RobotDynamics(object):
         qdd = Minv_tau + ca.solve(D, tau_lock)
         return qdd
 
-    def _lock_constraint_torque(self, q_dot, D, Minv_tau, mask, alpha=0.0):
+    def _lock_constraint_torque(self, q_dot, D, Minv_tau, mask, alpha):
         """
         Returns tau_lock, the generalized torque from the joint locks.
         """
