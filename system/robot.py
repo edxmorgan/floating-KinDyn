@@ -792,41 +792,78 @@ class RobotDynamics(object):
         tau_lock = S @ lam             # n×1
         return tau_lock
 
-    def forward_simulation(self):
+    def forward_simulation(self, has_endeffector = False):
         cm_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
         dt = ca.SX.sym('dt')
         rigid_p = ca.vertcat(*cm_parms, *m_params, *I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, m_p, base_pose, world_pose)
-        p = ca.vertcat(rigid_p, dt, self.lock_mask, self.baumgarte_alpha)
-        x    = ca.vertcat(q,  q_dot)
-        xdot = ca.vertcat(q_dot, self.qdd) * dt
-        dae  = {'x': x, 'ode': xdot, 'p': p, 'u': tau}
+        
+        if has_endeffector:
+            # Scalar position and velocity states
+            s     = ca.SX.sym('s')
+            s_dot = ca.SX.sym('s_dot')
+            F_s   = ca.SX.sym('u_s')  # scalar control input (force along tool axis)
+            M_s  = ca.SX.sym('m_s')  # scalar mass of end-effector
+            C_s = ca.SX.sym('c_s')  # scalar damping of end-effector
+            K_s = ca.SX.sym('k_s')  # scalar stiffness of end-effector
+            tau_sys = ca.vertcat(tau, F_s)
+            x    = ca.vertcat(q,  s, q_dot, s_dot) # state vector
+            s_dotdot = (F_s - C_s*s_dot - K_s*s) / M_s # spring-damper-mass system at the end-effector
+            xdot = ca.vertcat(q_dot, s_dot, self.qdd, s_dotdot) * dt # time derivative of state vector
+            p = ca.vertcat(rigid_p, M_s, C_s, K_s, dt, self.lock_mask, self.baumgarte_alpha)
+            sys_arg = [x, tau_sys, dt, rigid_p, M_s, C_s, K_s, self.lock_mask, self.baumgarte_alpha]
+        else:
+            x    = ca.vertcat(q,  q_dot) # state vector
+            xdot = ca.vertcat(q_dot, self.qdd) * dt # time derivative of state vector
+            tau_sys = tau
+            p = ca.vertcat(rigid_p, dt, self.lock_mask, self.baumgarte_alpha)
+            sys_arg = [x, tau_sys, dt, rigid_p, self.lock_mask, self.baumgarte_alpha]
+        
+        dae  = {'x': x, 'ode': xdot, 'p': p, 'u': tau_sys}
         opts = {
             'simplify': True,
             'number_of_finite_elements': 30,
             }
         intg = ca.integrator('intg', 'rk', dae, 0, 1, opts)
-        x_next = intg(x0=x, u=tau, p=p)['xf']
-        F_next = ca.Function('Mnext', [x, tau, dt, rigid_p, self.lock_mask, self.baumgarte_alpha], [x_next])
+        x_next = intg(x0=x, u=tau_sys, p=p)['xf']
+        F_next = ca.Function('Mnext', sys_arg, [x_next])
         return F_next
 
-    def forward_simulation_reg(self):
+    def forward_simulation_reg(self, has_endeffector = False):
         cm_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
         dt = ca.SX.sym('dt')
         rigid_p = ca.vertcat(self._sys_id_coeff["masses_id_syms_vertcat"],
                               self._sys_id_coeff["first_moments_id_vertcat"], 
                               self._sys_id_coeff["inertias_id_vertcat"], 
                               fv_coeff, fs_coeff, vec_g, r_com_payload, m_p, base_pose, world_pose)
-        p = ca.vertcat(rigid_p, dt, self.lock_mask, self.baumgarte_alpha)
-        x    = ca.vertcat(q,  q_dot)
-        xdot = ca.vertcat(q_dot, self.qdd_reg) * dt
-        dae  = {'x': x, 'ode': xdot, 'p': p, 'u': tau}
+        if has_endeffector:
+            # Scalar position and velocity states
+            s     = ca.SX.sym('s')
+            s_dot = ca.SX.sym('s_dot')
+            F_s   = ca.SX.sym('u_s')  # scalar control input (force along tool axis)
+            M_s  = ca.SX.sym('m_s')  # scalar mass of end-effector
+            C_s = ca.SX.sym('c_s')  # scalar damping of end-effector
+            K_s = ca.SX.sym('k_s')  # scalar stiffness of end-eff
+            tau_sys = ca.vertcat(tau, F_s)
+            x    = ca.vertcat(q,  s, q_dot, s_dot) # state vector
+            s_dotdot = (F_s - C_s*s_dot - K_s*s) / M_s # spring-damper-mass system at the end-effector
+            xdot = ca.vertcat(q_dot, s_dot, self.qdd_reg, s_dotdot) * dt # time derivative of state vector
+            p = ca.vertcat(rigid_p, M_s, C_s, K_s, dt, self.lock_mask, self.baumgarte_alpha)
+            sys_arg = [x, tau_sys, dt, rigid_p, M_s, C_s, K_s, self.lock_mask, self.baumgarte_alpha]
+        else:
+            p = ca.vertcat(rigid_p, dt, self.lock_mask, self.baumgarte_alpha)
+            x    = ca.vertcat(q,  q_dot)
+            xdot = ca.vertcat(q_dot, self.qdd_reg) * dt
+            tau_sys = tau
+            sys_arg = [x, tau_sys, dt, rigid_p, self.lock_mask, self.baumgarte_alpha]
+
+        dae  = {'x': x, 'ode': xdot, 'p': p, 'u': tau_sys}
         opts = {
             'simplify': True,
             'number_of_finite_elements': 30,
             }
         intg = ca.integrator('intg', 'rk', dae, 0, 1, opts)
-        x_next = intg(x0=x, u=tau, p=p)['xf']
-        F_next = ca.Function('Mnext_reg', [x, tau, dt, rigid_p, self.lock_mask, self.baumgarte_alpha], [x_next])
+        x_next = intg(x0=x, u=tau_sys, p=p)['xf']
+        F_next = ca.Function('Mnext_reg', sys_arg, [x_next])
         return F_next
 
     def _build_inverse_dynamics(self, D, C, q_dotdot, q_dot, g, B, J_tip, F_payload_base):
@@ -901,7 +938,7 @@ class RobotDynamics(object):
 
         return W_base
 
-    def build_model(self, root, tip, floating_base=False):
+    def build_model(self, root, tip, floating_base=False, has_endeffector = False):
         """
         Constructs the symbolic model for the robot's dynamics.
 
@@ -976,8 +1013,8 @@ class RobotDynamics(object):
         self.qdd_reg = self._build_forward_dynamics(q_dot, self.id_D, self.Cqdot_reg, self.id_g, 
                                                     self.B, tau, tip_com_J, F_payload_base, self.lock_mask, self.baumgarte_alpha)
 
-        self.F_next = self.forward_simulation()
-        self.F_next_reg = self.forward_simulation_reg()
+        self.F_next = self.forward_simulation(has_endeffector)
+        self.F_next_reg = self.forward_simulation_reg(has_endeffector)
         
         self.joint_torque = self._build_inverse_dynamics(self.D, self.C, q_dotdot, q_dot, self.g, self.B, tip_com_J, F_payload_base)
         assert self.joint_torque.shape == (n_joints, 1), f"Inverse dynamics vector qdd has incorrect shape: {self.joint_torque.shape}"
