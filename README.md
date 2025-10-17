@@ -11,9 +11,10 @@ A library for generating the kinematics and dynamics of floating base or fixed b
 - [x] [inverse dynamics (Lagrange–Euler)]()
 - [x] [energy and Lagrangian Terms]()
 - [x] [system Identification helpers (energy-based regressors)]()
-- [ ] [kalman filter]()
+- [x] [kalman filter]()
 - [x] [jit support]()
 - [ ] [gpu support]()
+- [x] [c++ code generation]()
 
 For usage examples of Diff_UVMS, see [Jupyter notebook](https://github.com/edxmorgan/underwater-manipulator-dynamics/tree/lagrange-euler/usage).
 
