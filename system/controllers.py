@@ -41,10 +41,10 @@ class RobotControllers:
 
         # PID with positive gains, velocity target is zero
         u_raw = (
-            ca.diag(self.Kp) @ err
-            + ca.diag(self.Kd) @ (self.q_dot)
-            + ca.diag(self.Ki) @ sum_e_next
-            + self.g_ff
+            self.g_ff # feedforward term
+            + ca.diag(self.Kp) @ err # proportional term
+            + ca.diag(self.Ki) @ sum_e_next # integral term
+            - ca.diag(self.Kd) @ (self.q_dot) # derivative term
         )
 
         # Elementwise saturation
