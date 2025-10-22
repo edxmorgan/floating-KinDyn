@@ -159,7 +159,9 @@ class RobotDynamics(object):
         tau = ca.SX.sym("tau", n_joints) # joint torque
         q_dotdot = ca.SX.sym("q_dotdot", n_joints) # joint accelerations
         fv_coeff = ca.SX.sym('Fv', n_joints)
+        fc_coeff = ca.SX.sym('Fc', n_joints)
         fs_coeff = ca.SX.sym('Fs', n_joints)
+        v_s_coeff = ca.SX.sym('v_s', n_joints) #stribeck velocity 5-10% of max velocity
         r_com_payload = ca.SX.sym("r_com_payload", 3)  # 3x1, COM in tool (end-effector) frame
         r_cob_payload = ca.SX.sym("r_cob_payload", 3)  # 3x1, COB in tool (end-effector) frame
         m_p = ca.SX.sym("m_p") # payload mass
@@ -205,7 +207,9 @@ class RobotDynamics(object):
             prev_joint = joint.type
             if joint.child == tip and joint.type == "fixed":
                 tip_offset = XT_prev
-        return rho_w, i_X_p, tip_offset, cm_parms, cb_parms, V_params, m_params, I_b_mats, I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, r_cob_payload, m_p, V_p, q, q_dot, q_dotdot, tau
+        return (rho_w, i_X_p, tip_offset, cm_parms, cb_parms, V_params, m_params, I_b_mats, I_params, 
+                fv_coeff, fc_coeff, fs_coeff, v_s_coeff,
+                vec_g, r_com_payload, r_cob_payload, m_p, V_p, q, q_dot, q_dotdot, tau)
 
     def _kinematics(self, root, tip, floating_base = False):
         """Returns the inverse dynamics as a casadi function."""
@@ -214,7 +218,8 @@ class RobotDynamics(object):
 
         n_joints = self.get_n_joints(root, tip)
         
-        rho_w, i_X_p, tip_offset, cm_parms, cb_parms, V_params, m_params, I_b_mats, I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, r_cob_payload, m_p, V_p, q, q_dot, q_dotdot, tau = self._model_calculation(root, tip)
+        (rho_w, i_X_p, tip_offset, cm_parms, cb_parms, V_params, m_params, I_b_mats, I_params, 
+        fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, r_cob_payload, m_p, V_p, q, q_dot, q_dotdot, tau) = self._model_calculation(root, tip)
         i_X_0s = [] # transformation of joint i wrt base origin
         icom_X_0s = [] # transformation of center of mass i wrt base origin
         icob_X_0s = [] # transformation of center of buoyancy i wrt base origin
@@ -266,7 +271,7 @@ class RobotDynamics(object):
         com_R_symx, com_Fks, com_qFks, com_geo_J, com_body_J, com_anlyt_J = self._compute_Fk_and_jacobians(q, icom_X_0s)
         cob_R_symx, cob_Fks, cob_qFks, cob_geo_J, cob_body_J, cob_anlyt_J = self._compute_Fk_and_jacobians(q, icob_X_0s)
 
-        dynamic_parameters = [cm_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose]
+        dynamic_parameters = [cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose]
         underwater_parameters = [rho_w, cb_parms, V_params, r_cob_payload, V_p]
         
         kinematic_dict = {
@@ -350,7 +355,7 @@ class RobotDynamics(object):
         n_joints = self.get_n_joints(root, tip)
         
         kinematic_dict = self._kinematics(root, tip, floating_base=floating_base)
-        cm_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, m_p, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
+        cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p, q, q_dot, q_dotdot, tau, base_pose, world_pose = kinematic_dict['parameters']
         
         internal_fk_eval_euler = ca.Function("internal_fkeval_euler", [q, base_pose, world_pose], [kinematic_dict['Fks'][-1]])
         
@@ -391,7 +396,7 @@ class RobotDynamics(object):
         return min_pos, max_pos, positions
 
     def _sys_id_lump_parameters(self):
-        cm_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
+        cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
         n_joints = self.kinematic_dict['n_joints']
         I_lump = []
         mrc_lump = []
@@ -399,8 +404,9 @@ class RobotDynamics(object):
         m_id_list = []
         m_rci_id_list = []
         I_id_list = []
-        fs_list = []
+        fc_list = []
         fv_list = []
+        fs_list = []
         for i in range(n_joints):
             # define lumped parameters in dynamics model
             m_i = m_params[i]
@@ -423,32 +429,38 @@ class RobotDynamics(object):
             I_i_xy_id = ca.SX.sym(f"Ixy_lumped_{i}")
             I_i_xz_id = ca.SX.sym(f"Ixz_lumped_{i}")
             I_i_yz_id = ca.SX.sym(f"Iyz_lumped_{i}")
-            fs_i_id = ca.SX.sym(f"fs_{i}")
             fv_i_id = ca.SX.sym(f"fv_{i}")
+            fc_i_id = ca.SX.sym(f"fc_{i}")
+            fs_i_id = ca.SX.sym(f"fs_{i}")
+            
 
             m_id_list.append(m_i_id)
             m_rci_id_list.append(m_rci_id)
             I_id_list.append([I_i_xx_id, I_i_yy_id, I_i_zz_id, I_i_xy_id, I_i_xz_id, I_i_yz_id])
-            fs_list.append(fs_i_id)
             fv_list.append(fv_i_id)
+            fc_list.append(fc_i_id)
+            fs_list.append(fs_i_id)
             
         self._sys_id_coeff =  {
             "masses": m_params,                    # [m_i]
             "first_moments": mrc_lump,             # [m_i * r_ci] (3-vec per link)
             "inertias_vec6": I_lump,               # [Ixx, Iyy, Izz, Ixy, Ixz, Iyz] about link i origin
-            "fs": fs_coeff, 
+            "fc": fc_coeff, 
             "fv": fv_coeff,
+            "fs": fs_coeff,
             
             "masses_id_list": m_id_list,           # symbols for m_i
             "first_moments_id_list": m_rci_id_list,# symbols for m_i * r_ci (3-vec per link)
             "inertias_id_list": I_id_list,         # symbols for inertia vec6
             "fv_list": fv_list,
+            "fc_list": fc_list,
             "fs_list": fs_list,
             
             "masses_id_syms_vertcat": ca.vertcat(*m_id_list),           # symbols for m_i
             "first_moments_id_vertcat": ca.vertcat(*m_rci_id_list),# symbols for m_i * r_ci (3-vec per link)
             "inertias_id_vertcat": ca.vertcat(*[s for six in I_id_list for s in six]),             # symbols for inertia vec6
             "fv_id_vertcat": ca.vertcat(*fv_list),
+            "fc_id_vertcat": ca.vertcat(*fc_list),   
             "fs_id_vertcat": ca.vertcat(*fs_list),   
         }
 
@@ -482,7 +494,7 @@ class RobotDynamics(object):
         return J
     
     def _build_link_i_regressor(self):
-        cm_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
+        cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
         n_joints = self.kinematic_dict['n_joints']
         theta_i_list = []
         Beta_K = [] #collection (11 × 1) vectors that allow the Kinetic energy to be written as a function of πi (lumped parameters).
@@ -494,6 +506,7 @@ class RobotDynamics(object):
             m_rci_id = self._sys_id_coeff['first_moments_id_list'][i]
             I_id_list = self._sys_id_coeff['inertias_id_list'][i]
             fv_i_id = self._sys_id_coeff["fv_list"][i]
+            fc_i_id = self._sys_id_coeff["fc_list"][i]
             fs_i_id = self._sys_id_coeff["fs_list"][i]
 
             I_i_xx_id, I_i_yy_id, I_i_zz_id, I_i_xy_id, I_i_xz_id, I_i_yz_id = I_id_list
@@ -525,7 +538,7 @@ class RobotDynamics(object):
             physical_plausibility_matrix = self._pseudo_inertia(m_i_id, m_rci_id, I_i_id)
             physical_plausibility_matrices.append(physical_plausibility_matrix)
             # collect lumped parameters into
-            theta_i = [m_i_id, m_rci_id, I_i_xx_id, I_i_yy_id, I_i_zz_id, I_i_xy_id, I_i_xz_id, I_i_yz_id, fv_i_id, fs_i_id]
+            theta_i = [m_i_id, m_rci_id, I_i_xx_id, I_i_yy_id, I_i_zz_id, I_i_xy_id, I_i_xz_id, I_i_yz_id, fv_i_id, fc_i_id, fs_i_id]
             theta_i_SX = ca.vertcat(*theta_i)
             theta_i_list.append(theta_i)
  
@@ -541,6 +554,7 @@ class RobotDynamics(object):
         return D_i_s, Beta_K, Beta_P, theta_i_list, physical_plausibility_matrices
     
     def _build_sys_regressor(self, q, q_dot, q_ddot):
+        cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
         K = 0
         P = 0
         theta = []
@@ -583,9 +597,9 @@ class RobotDynamics(object):
                     y_ij = dt_term - minus_q_term + plus_u_term   # (p_per x 1)
                     
                     # friction only on the joint's own block
-                    fric_Y = ca.vertcat(q_dot[i], ca.sign(q_dot[i])) if j == i else ca.SX.zeros(2,1)
+                    fric_Y = ca.vertcat(q_dot[i], ca.sign(q_dot[i]), ca.sign(q_dot[i]) * ca.exp(-(ca.fabs(q_dot[i])/v_s_coeff[i])**2)) if j == i else ca.SX.zeros(3,1)
                     
-                    y_ij_b = ca.vertcat(y_ij, fric_Y)  # length n_theta (=10+2)
+                    y_ij_b = ca.vertcat(y_ij, fric_Y)  # length n_theta (=10+3)
                     
                     start_col = j * n_theta
                     end_col = (j + 1) * n_theta
@@ -599,7 +613,7 @@ class RobotDynamics(object):
 
     def _kinetic_energy(self):
         """Returns the kinetic energy of the system."""
-        cm_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, m_p, q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
+        cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p, q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
         n_joints = self.kinematic_dict['n_joints']
         D = ca.SX.zeros((n_joints, n_joints))  # D(q) is a symmetric positive definite matrix that is in general configuration dependent. The matrix  is called the inertia matrix.
         K = 0
@@ -616,7 +630,7 @@ class RobotDynamics(object):
 
     def _potential_energy(self):
         """Returns the potential energy of the system."""
-        cm_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
+        cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
         rho_w, cb_parms, V_params, r_cob_payload, V_p = self.kinematic_dict['underwater_parameters']
         P = 0
         n_joints = self.kinematic_dict['n_joints']
@@ -706,13 +720,27 @@ class RobotDynamics(object):
     def _build_gravity_term(self, P, q):
         g_q = ca.gradient(P, q)
         return g_q
-    
-    def _build_friction_term(self, Fv, Fs, q_dot):
-        viscous_friction = ca.diag(Fv)@q_dot
-        column_friction = ca.diag(Fs)@ca.sign(q_dot)
-        friction = viscous_friction + column_friction
-        return friction
-    
+
+
+    def _build_friction_term(self, Fv, Fc, Fs, v_s, q_dot):
+        """
+        τ_f = Fv * q_dot + Fc * sign(q_dot) + Fs * exp(-( |q_dot| / v_s )**2) * sign(q_dot)
+
+        Fv, Fc, Fs, v_s: shape (n,) CasADi vectors or numpy arrays
+        q_dot: joint velocity vector, shape (n,)
+        returns: τ_f, shape (n,)
+        """
+        absqdot = ca.fabs(q_dot)
+        sgnqdot = ca.sign(q_dot)
+        strib = ca.exp(- (absqdot / v_s)**2)
+
+        τ_visc = ca.diag(Fv) @ q_dot
+        τ_coul = ca.diag(Fc) @ sgnqdot
+        τ_strib = ca.diag(Fs) @ strib * sgnqdot
+
+        τ_f = τ_visc + τ_coul + τ_strib
+        return τ_f
+
     def _build_D_dot(self, q, q_dot, D):
         n_joints = q.size1()
         D_dot = ca.SX.zeros(n_joints, n_joints)
@@ -747,7 +775,7 @@ class RobotDynamics(object):
         # r_com_payload: 3x1, COM in tool (end-effector) frame
         # Uses last link rotation to base and gravity vec_g from parameters.
         R_e = self.kinematic_dict["R_symx"][-1]    # 3x3, tool->base
-        _, _, _, _, _, vec_g, *_ = self.kinematic_dict['parameters']
+        _, _, _, _, _, _, _, vec_g, *_ = self.kinematic_dict['parameters']
         f = m_p * vec_g                             # 3x1, base force
         r_w = R_e @ r_com_payload                      # 3x1, COM in base
         τ = ca.cross(r_w, f)                      # 3x1, tool moment about base origin
@@ -793,9 +821,9 @@ class RobotDynamics(object):
         return tau_lock
 
     def forward_simulation(self, has_endeffector = False):
-        cm_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
+        cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
         dt = ca.SX.sym('dt')
-        rigid_p = ca.vertcat(*cm_parms, *m_params, *I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, m_p, base_pose, world_pose)
+        rigid_p = ca.vertcat(*cm_parms, *m_params, *I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p, base_pose, world_pose)
         
         if has_endeffector:
             # Scalar position and velocity states
@@ -829,12 +857,12 @@ class RobotDynamics(object):
         return F_next
 
     def forward_simulation_reg(self, has_endeffector = False):
-        cm_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
+        cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
         dt = ca.SX.sym('dt')
         rigid_p = ca.vertcat(self._sys_id_coeff["masses_id_syms_vertcat"],
                               self._sys_id_coeff["first_moments_id_vertcat"], 
                               self._sys_id_coeff["inertias_id_vertcat"], 
-                              fv_coeff, fs_coeff, vec_g, r_com_payload, m_p, base_pose, world_pose)
+                              fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p, base_pose, world_pose)
         if has_endeffector:
             # Scalar position and velocity states
             s     = ca.SX.sym('s')
@@ -878,7 +906,7 @@ class RobotDynamics(object):
         The floating base(AUV) feels the equal and opposite wrench.
         """
         # Get symbolic variables from the built model
-        cm_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
+        cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
         n_joints = self.kinematic_dict['n_joints']
 
         # Initialize total inertial force and torque (rate of change of momentum)
@@ -958,7 +986,7 @@ class RobotDynamics(object):
         self.kinematic_dict = self._kinematics(root, tip, floating_base)
         
         # Step 2: Extract necessary symbolic variables and parameters from the model
-        cm_parms, m_params, I_params, fv_coeff, fs_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
+        cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
         n_joints = self.kinematic_dict['n_joints']
 
         # Step 3: Calculate energy components based on the Lagrangian formulation
@@ -971,7 +999,10 @@ class RobotDynamics(object):
         self.g = self._build_gravity_term(self.P, q)
         
         # friction effects
-        self.B = self._build_friction_term(fv_coeff, fs_coeff , q_dot)
+
+        fs_coeff, v_s_coeff,
+        self.B = self._build_friction_term(fv_coeff, fc_coeff, fs_coeff, v_s_coeff, q_dot)
+        
         
         # Coriolis matrix is derived from the inertia matrix and joint velocities
         self.C = self._coriolis_matrix(self.D, q, q_dot)
