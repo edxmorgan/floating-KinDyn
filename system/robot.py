@@ -160,7 +160,7 @@ class RobotDynamics(object):
         q_dotdot = ca.SX.sym("q_dotdot", n_joints) # joint accelerations
         fv_coeff = ca.SX.sym('Fv', n_joints)
         fc_coeff = ca.SX.sym('Fc', n_joints)
-        fs_coeff = ca.SX.sym('Fs', n_joints)
+        fs_coeff = ca.SX.sym('Fs', n_joints) #stribeck friction coefficients
         v_s_coeff = ca.SX.sym('v_s', n_joints) #stribeck velocity 5-10% of max velocity
         r_com_payload = ca.SX.sym("r_com_payload", 3)  # 3x1, COM in tool (end-effector) frame
         r_cob_payload = ca.SX.sym("r_cob_payload", 3)  # 3x1, COB in tool (end-effector) frame
@@ -721,7 +721,6 @@ class RobotDynamics(object):
         g_q = ca.gradient(P, q)
         return g_q
 
-
     def _build_friction_term(self, Fv, Fc, Fs, v_s, q_dot):
         """
         τ_f = Fv * q_dot + Fc * sign(q_dot) + Fs * exp(-( |q_dot| / v_s )**2) * sign(q_dot)
@@ -732,7 +731,9 @@ class RobotDynamics(object):
         """
         absqdot = ca.fabs(q_dot)
         sgnqdot = ca.sign(q_dot)
-        strib = ca.exp(- (absqdot / v_s)**2)
+        eps = 1e-6
+        v_s_safe = ca.sqrt(v_s**2 + eps**2)
+        strib = ca.exp(- (absqdot / v_s_safe)**2)
 
         τ_visc = ca.diag(Fv) @ q_dot
         τ_coul = ca.diag(Fc) @ sgnqdot
