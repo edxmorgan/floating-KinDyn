@@ -862,8 +862,13 @@ class RobotDynamics(object):
         dt = ca.SX.sym('dt')
         rigid_p = ca.vertcat(self._sys_id_coeff["masses_id_syms_vertcat"],
                               self._sys_id_coeff["first_moments_id_vertcat"], 
-                              self._sys_id_coeff["inertias_id_vertcat"], 
-                              fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p, base_pose, world_pose)
+                              self._sys_id_coeff["inertias_id_vertcat"],
+                              self._sys_id_coeff["fv_id_vertcat"], 
+                              self._sys_id_coeff["fc_id_vertcat"], 
+                              self._sys_id_coeff["fs_id_vertcat"], 
+                              v_s_coeff, vec_g, r_com_payload, m_p, base_pose, world_pose)
+        
+
         if has_endeffector:
             # Scalar position and velocity states
             s     = ca.SX.sym('s')
@@ -894,6 +899,18 @@ class RobotDynamics(object):
         x_next = intg(x0=x, u=tau_sys, p=p)['xf']
         F_next = ca.Function('Mnext_reg', sys_arg, [x_next])
         return F_next
+    
+    def id2sim_params(self):
+        sim_params_expr = ca.vertcat(self._sys_id_coeff["masses_id_syms_vertcat"],
+                            self._sys_id_coeff["first_moments_id_vertcat"], 
+                            self._sys_id_coeff["inertias_id_vertcat"],
+                            self._sys_id_coeff["fv_id_vertcat"],
+                            self._sys_id_coeff["fc_id_vertcat"], 
+                            self._sys_id_coeff["fs_id_vertcat"])
+
+        id2sim_params_F = ca.Function('id2sim_params', [self.id_theta], [sim_params_expr])
+        return id2sim_params_F
+
 
     def _build_inverse_dynamics(self, D, C, q_dotdot, q_dot, g, B, J_tip, F_payload_base):
         tau_payload = J_tip.T @ F_payload_base
@@ -997,13 +1014,7 @@ class RobotDynamics(object):
 
         # Step 4: Derive the dynamic matrices from the energy components
         # Gravity vector is the gradient of potential energy
-        self.g = self._build_gravity_term(self.P, q)
-        
-        # friction effects
-
-        fs_coeff, v_s_coeff,
-        self.B = self._build_friction_term(fv_coeff, fc_coeff, fs_coeff, v_s_coeff, q_dot)
-        
+        self.g = self._build_gravity_term(self.P, q)        
         
         # Coriolis matrix is derived from the inertia matrix and joint velocities
         self.C = self._coriolis_matrix(self.D, q, q_dot)
@@ -1035,15 +1046,20 @@ class RobotDynamics(object):
         
         self.lock_mask = ca.SX.sym('lock_mask', q.size1(), 1)  # 1 means locked
         self.baumgarte_alpha = ca.SX.sym('baumgarte_alpha')  # baumgarte stability gain
+
+        # friction effects
+        self.B = self._build_friction_term(fv_coeff, fc_coeff, fs_coeff, v_s_coeff, q_dot)
         self.qdd = self._build_forward_dynamics(q_dot, self.D, self.Cqdot, self.g,
                                                 self.B, tau, tip_com_J, F_payload_base, self.lock_mask, self.baumgarte_alpha)
         
         assert self.qdd.shape == (n_joints, 1), f"Forward dynamics vector qdd has incorrect shape: {self.qdd.shape}"
 
         self.Cqdot_reg = self._coriolis_times_qdot(self.id_D, q, q_dot)
-
+        # friction effects (for regressor type)
+        self.B_reg = self._build_friction_term(self._sys_id_coeff["fv_id_vertcat"], self._sys_id_coeff["fc_id_vertcat"],
+                                                self._sys_id_coeff["fs_id_vertcat"], v_s_coeff, q_dot)
         self.qdd_reg = self._build_forward_dynamics(q_dot, self.id_D, self.Cqdot_reg, self.id_g, 
-                                                    self.B, tau, tip_com_J, F_payload_base, self.lock_mask, self.baumgarte_alpha)
+                                                    self.B_reg, tau, tip_com_J, F_payload_base, self.lock_mask, self.baumgarte_alpha)
 
         self.F_next = self.forward_simulation(has_endeffector)
         self.F_next_reg = self.forward_simulation_reg(has_endeffector)
