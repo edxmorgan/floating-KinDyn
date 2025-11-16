@@ -1,13 +1,15 @@
 # controllers.py
 import casadi as ca
-
+from system.robot import RobotDynamics
 class RobotControllers:
-    def __init__(self, n_joints: int):
+    def __init__(self, n_joints: int, model: RobotDynamics):
         n = int(n_joints)
+        cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = model.kinematic_dict['parameters']
+        self.g_ff = model.id_g # feedforward term
 
         # Symbols, all vectors are n×1 and column shaped
-        self.q       = ca.SX.sym("q",      n, 1)  # actual position
-        self.q_dot   = ca.SX.sym("q_dot",  n, 1)  # actual velocity
+        self.q       = q
+        self.q_dot   = q_dot
         self.q_ref   = ca.SX.sym("q_ref",  n, 1)  # reference position
 
         self.Kp      = ca.SX.sym("Kp",     n, 1)
@@ -17,10 +19,16 @@ class RobotControllers:
         self.sum_e   = ca.SX.sym("sum_e",  n, 1)  # integral buffer
         self.dt      = ca.SX.sym("dt")            # scalar step
 
-        self.g_ff    = ca.SX.sym("g_ff",   n, 1)  # gravity feedforward, torque units
-
         self.u_max   = ca.SX.sym("u_max",  n, 1)
         self.u_min   = ca.SX.sym("u_min",  n, 1)
+
+        self.sim_params = ca.vertcat(model._sys_id_coeff["masses_id_syms_vertcat"],
+                    model._sys_id_coeff["first_moments_id_vertcat"], 
+                    model._sys_id_coeff["inertias_id_vertcat"],
+                    model._sys_id_coeff["fv_id_vertcat"],
+                    model._sys_id_coeff["fc_id_vertcat"], 
+                    model._sys_id_coeff["fs_id_vertcat"],
+                    v_s_coeff, vec_g, r_com_payload, m_p, base_pose, world_pose)
 
     def build_arm_pid(self):
         """
@@ -47,6 +55,7 @@ class RobotControllers:
             - ca.diag(self.Kd) @ (self.q_dot) # derivative term
         )
 
+
         # Elementwise saturation
         u_sat = ca.fmin(ca.fmax(u_raw, self.u_min), self.u_max)
 
@@ -61,9 +70,9 @@ class RobotControllers:
                 self.Kd,
                 self.sum_e,
                 self.dt,
-                self.g_ff,
                 self.u_max,
                 self.u_min,
+                self.sim_params
             ],
             [u_sat, err, sum_e_next],
         )
