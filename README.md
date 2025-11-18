@@ -2,6 +2,8 @@
 
 Symbolic modelling toolkit for floating- or fixed-base manipulators. The library ingests a URDF chain, constructs forward/ inverse kinematics, dynamics, energy terms, and identification regressors as CasADi graphs, and can JIT compile them into C for fast controllers, estimators, or trajectory optimisers.
 
+<img src="./resources/dory.jpg" width="420" alt="DORY UVMS" />
+
 ## Key capabilities
 
 - **Full Lagrangian pipeline** – generates inertia (`D`), Coriolis (`C`), gravity (`g`), friction, energy, power, and payload reaction terms via CasADi symbols.
