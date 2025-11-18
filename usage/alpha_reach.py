@@ -36,7 +36,7 @@ class Params:
     Ki = cs.vertcat(0.0, 0.0, 0.0, 0.0)
     Kd = cs.vertcat(1.0, 1.0, 1.0, 1.0)
 
-    gravity = 0.0
+    gravity = 9.81
 
     base_T0_new = [0.190, 0.000, -0.120, 3.141592653589793, 0.000, 0.000] # underarm #transformation of uv body frame to manipulator base
     baumgarte_alpha = 200
