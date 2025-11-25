@@ -105,6 +105,6 @@ class Params:
 
         thet1 = (cs.pi / 2.0) + cs.atan2(z - d0, R - a0) - term4 - term2
 
-        q012 = cs.vertcat(thet0, thet1, thet2)
+        q012 = cs.vertcat(thet0, thet1, thet2, 0.0)
         q012_fun = cs.Function("ik_analytic_base", [p_base], [q012])
         return q012_fun, q012, p_base
