@@ -97,7 +97,7 @@ Extended Kalman Filter helpers (`libmEKF_next.so`, `joint_ekf.ipynb`) demonstrat
 ## Implementation status
 
 - [x] Forward kinematics (Euler & quaternion forms)
-- [ ] Inverse kinematics (analytic solver placeholder)
+- [x] Inverse kinematics (fast closed form solver)
 - [x] Workspace analysis (sampling-based AABB + cloud)
 - [x] Forward dynamics (with payload and friction terms)
 - [x] Inverse dynamics (Lagrange–Euler)

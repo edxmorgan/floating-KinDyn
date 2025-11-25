@@ -144,6 +144,7 @@ class RobotDynamics(object):
         if self.robot_desc is None:
             raise ValueError('Robot description not loaded from urdf')
         n_joints = self.get_n_joints(root, tip)
+        self.n_joints = n_joints
         chain = self.robot_desc.get_chain(root, tip)
         i_X_p = []   # collect transforms from child link origin to parent link origin
         tip_offset = ca.DM.eye(4)

@@ -27,9 +27,21 @@ def T_from_xyz_rpy(xyz, rpy):
     R = rot_from_rpy(rpy[0], rpy[1], rpy[2])
     t = ca.vertcat(xyz[0], xyz[1], xyz[2])
     T = ca.SX.eye(4)
+    if isinstance(xyz, ca.MX) and isinstance(rpy, ca.MX):
+        T = ca.MX.eye(4)
     T[0:3, 0:3] = R
     T[0:3, 3] = t
     return T
+
+def inv_T(T):
+    R = T[0:3, 0:3]
+    t = T[0:3, 3]
+    T_inv = ca.SX.eye(4)
+    if isinstance(T, ca.MX):
+        T_inv = ca.MX.eye(4)
+    T_inv[0:3, 0:3] = R.T
+    T_inv[0:3, 3] = -R.T @ t
+    return T_inv
 
 def vee(omega_hat):
     return ca.vertcat(
