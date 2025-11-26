@@ -69,7 +69,7 @@ class Params:
         return cs.fmin(cs.fmax(x, lo), hi)
 
     @staticmethod
-    def build_analytic_ik_casadi():
+    def build_analytic_underarm_ik_casadi():
         # position of the end effector in base frame
         p_base = cs.SX.sym("p_base", 3)
         x = p_base[0]
@@ -106,5 +106,43 @@ class Params:
         thet1 = (cs.pi / 2.0) + cs.atan2(z - d0, R - a0) - term4 - term2
 
         q012 = cs.vertcat(thet0, thet1, thet2, 0.0)
-        q012_fun = cs.Function("ik_analytic_base", [p_base], [q012])
+        q012_fun = cs.Function("ik_analytic_underarm_base", [p_base], [q012])
+        return q012_fun, q012, p_base
+
+    @staticmethod
+    def build_analytic_overarm_ik_casadi():
+        # position of the end effector in base frame
+        p_base = cs.SX.sym("p_base", 3)
+        x = p_base[0]
+        y = p_base[1]
+        z = p_base[2]
+
+        a0 = Params.a0
+        a1 = Params.a1
+        a2 = Params.a2
+        d0 = Params.d0
+        d3 = Params.d3
+
+        l1 = a1
+        l2 = cs.sqrt(a2**2 + d3**2)
+
+        R = cs.sqrt(x**2 + y**2)
+
+        thet0 = cs.arctan2(y, x)
+        l3 = cs.sqrt((R + a0)**2 + (z - d0)**2)
+        
+        arg1 = (l1**2 + l2**2 - l3**2) / (2 * l1 * l2)
+        term1 = cs.arccos(Params.casadi_clip(arg1, -1, 1))
+        
+        term2 = cs.arcsin(Params.casadi_clip((2 * a2) / l1, -1, 1))
+        term3 = cs.arcsin(Params.casadi_clip(a2 / l2, -1, 1))
+        
+        thet2 = term1 - term2 - term3
+
+        arg2 = (l1**2 + l3**2 - l2**2) / (2 * l1 * l3)
+        term4 = cs.arccos(Params.casadi_clip(arg2, -1, 1))
+        
+        thet1 = ((3 * cs.pi) / 2) - cs.arctan2(z - d0, R + a0) - term4 - term2
+        q012 = cs.vertcat(thet0, thet1, thet2, 0.0)
+        q012_fun = cs.Function("ik_analytic_overarm_base", [p_base], [q012])
         return q012_fun, q012, p_base
