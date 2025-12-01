@@ -14,8 +14,7 @@ def require_built_model(func):
         missing = [name for name in required_attrs if not hasattr(self, name)]
         if missing:
             raise AttributeError(
-                f"Missing model attributes: {', '.join(missing)}. "
-                "Call `build_model(root, tip, floating_base)` before accessing this property."
+                f"Call `build_model(root, tip, floating_base)` before accessing this method."
             )
         return func(self, *args, **kwargs)
     return wrapper
