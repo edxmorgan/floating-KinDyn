@@ -52,15 +52,15 @@ robot.from_file("resources/urdf/alpha_5_robot.urdf")
 robot.build_model("base_link", "alpha_standard_jaws_base_link", floating_base=False)
 
 # Access generated functions
-fk = robot.get_kinematic_dict["Fks"][-1]        # terminal FK pose (symbolic)
-M = robot.get_inertia_matrix                      # D(q)
-C = robot.get_coriolis_centrifugal_matrix         # C(q, qdot)
-G = robot.get_gravity_vector                      # g(q)
-qdd = robot.get_forward_dynamics                  # forward dynamics with friction
-Y = robot.kinematic_dict["Y"]                     # identification regressor
+fk = robot.get_kinematic_dict()["Fks"][-1]        # terminal FK pose (symbolic)
+M = robot.get_inertia_matrix()                      # D(q)
+C = robot.get_coriolis_centrifugal_matrix()         # C(q, qdot)
+G = robot.get_gravity_vector()                      # g(q)
+qdd = robot.get_forward_dynamics()                  # forward dynamics with friction
+Y = robot.kinematic_dict()["Y"]                     # identification regressor
 
 # Evaluate FK numerically
-fk_func = robot.kinematic_dict["fk_func"]         # casadi.Function built during _kinematics
+fk_func = robot.kinematic_dict()["fk_func"]         # casadi.Function built during _kinematics
 pose = fk_func(q_sample, base_pose, world_pose)
 ```
 
