@@ -487,6 +487,93 @@ class RobotDynamics(object):
         return ik_fun
 
 
+    def internal_build_arm_base_ik_fun(self, 
+            use_joint_polytope_constraint: bool = False,
+            polytope_shape: tuple | None = None,
+            polytope_joint_indices: list[int] | None = None,
+        ):
+        """
+        Build a arm base IK function with optional joint space polytope constraint.
+
+        poly_joint_indices: which joint indices the polytope acts on.
+        For example:
+            [0, 1]     -> polytope_shape = (m, 2) polygon in (q0, q1)
+            [0, 1, 2]  -> polytope_shape = (m, 3) polytope in (q0, q1, q2)
+            [0, 1, 2, 3] -> polytope_shape = (m, 4) polytope in all 4 joints
+        """
+        cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
+        n_joints = self.kinematic_dict['n_joints']
+        # forward kinematics, fk_eval(q, base_pose, world_pose) -> [x, y, z, roll, pitch, yaw]
+        internal_fk_eval_euler = ca.Function("internal_fkeval_euler", [q, base_pose, world_pose], [self.kinematic_dict['Fks'][-1]])
+        opti = ca.Opti()
+
+        # decision variable
+        q = opti.variable(n_joints)
+
+        # parameters
+        target_param    = opti.parameter(3)
+        joint_min_param = opti.parameter(n_joints)
+        joint_max_param = opti.parameter(n_joints)
+
+        # polytope parameters
+        if use_joint_polytope_constraint:
+            assert polytope_shape is not None, "polytope_shape must be provided when using polytope constraints."
+            assert polytope_joint_indices is not None, "polytope_joint_indices must be provided when using polytope constraints."
+
+            row_A_cons, col_A_cons = polytope_shape
+            assert col_A_cons == len(polytope_joint_indices), (
+                f"polytope_shape[1] = {col_A_cons} must match len(polytope_joint_indices) = {len(polytope_joint_indices)}"
+            )
+
+            A_hull_param = opti.parameter(row_A_cons, col_A_cons)
+            b_hull_param = opti.parameter(row_A_cons)
+        else:
+            A_hull_param = None
+            b_hull_param = None
+
+
+        fk_out = internal_fk_eval_euler(q, [0,0,0,0,0,0], [0,0,0,0,0,0])   # 6x1
+        pos_fk = fk_out[0:3]
+        # rpy_fk = fk_out[3:6]
+
+        pos_target = target_param[0:3]
+        # rpy_target = target_param[3:6]
+
+        pos_err = pos_fk - pos_target
+        # rpy_err = rpy_fk - rpy_target
+
+        cost = ca.sumsqr(pos_err)
+        opti.minimize(cost)
+
+        # box joint limits
+        for i in range(n_joints):
+            opti.subject_to(opti.bounded(joint_min_param[i], q[i], joint_max_param[i]))
+
+        # joint polytope constraint, applied to the chosen joint subset
+        if use_joint_polytope_constraint:
+            # build q_poly = [q[i0], q[i1], ...] as a CasADi vector
+            q_poly = ca.vertcat(*[q[i] for i in polytope_joint_indices])
+            opti.subject_to(A_hull_param @ q_poly + b_hull_param <= 0)
+
+        # solver
+        opti.solver("ipopt", {"print_time": 0}, {"print_level": 0})
+
+        # function interface
+        if use_joint_polytope_constraint:
+            ik_fun = opti.to_function(
+                "floating_base_ik",
+                [target_param, joint_min_param, joint_max_param, A_hull_param, b_hull_param],
+                [q],
+            )
+        else:
+            ik_fun = opti.to_function(
+                "floating_base_ik",
+                [target_param, joint_min_param, joint_max_param],
+                [q],
+            )
+
+        return ik_fun
+
     def _sys_id_lump_parameters(self):
         cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = self.kinematic_dict['parameters']
         n_joints = self.kinematic_dict['n_joints']
@@ -1197,14 +1284,19 @@ class RobotDynamics(object):
         return self.qdd
     
     @require_built_model
-    def build_floating_base_ik_fun(self, 
+    def build_floating_base_ik_fun(self, floating_base=False,
                                    use_joint_polytope_constraint: bool = False,
                                    polytope_shape: tuple | None = None,
                                    polytope_joint_indices: list[int] | None = None):
-        solver = self.internal_build_floating_base_ik_fun(use_joint_polytope_constraint, 
-                                                          polytope_shape, 
-                                                          polytope_joint_indices)
-        return solver
+        if floating_base:
+            ik_solver = self.internal_build_floating_base_ik_fun(use_joint_polytope_constraint, 
+                                                            polytope_shape, 
+                                                            polytope_joint_indices)
+        else:
+            ik_solver = self.internal_build_arm_base_ik_fun(use_joint_polytope_constraint, 
+                                                            polytope_shape, 
+                                                            polytope_joint_indices)
+        return ik_solver
 
 
     @require_built_model
