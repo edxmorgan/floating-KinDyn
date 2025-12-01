@@ -7,6 +7,7 @@ Symbolic modelling toolkit for floating- or fixed-base manipulators. The library
 ## Key capabilities
 
 - **Full Lagrangian pipeline** – generates inertia (`D`), Coriolis (`C`), gravity (`g`), friction, energy, power, and payload reaction terms via CasADi symbols.
+- **Inverse kinematics** – closed-form arm IK plus floating-base IK with optional joint-space polytopes (see `RobotDynamics.build_floating_base_ik_fun`).
 - **Workspace analysis** – sampling-based AABB and point-cloud reach studies via `RobotDynamics.approximate_workspace` plus precomputed `usage/workspace.npy`.
 - **System ID helpers** – exported regressors (`id2sim_params.casadi`, `arm_id_Y.casadi`) and parameter lumping utilities for energy-based identification.
 - **Controllers & filters** – CasADi PID builder with gravity feedforward (`system/controllers.py`) and EKF/Sensor fusion examples under `usage/`.
@@ -66,6 +67,8 @@ pose = fk_func(q_sample, base_pose, world_pose)
 
 `RobotDynamics.build_model` also assembles friction (`B`), Baumgarte constraints, payload wrench models, and workspace helpers. Forward and inverse dynamics functions are available via the documented properties.
 
+Floating-base IK can be built with joint polytopes by passing `use_joint_polytope_constraint=True` along with `polytope_shape` and `polytope_joint_indices`; the solver enforces `A_hull @ q_poly + b_hull <= 0` on the selected joints.
+
 ## Controllers & observers
 
 `system/controllers.py` exposes `RobotControllers.build_arm_pid()`, which wraps the generated feedforward torque (`id_g`) with elementwise PID gains, saturation limits, and integral buffers:
@@ -103,6 +106,7 @@ Extended Kalman Filter helpers (`libmEKF_next.so`, `joint_ekf.ipynb`) demonstrat
 - [x] Inverse dynamics (Lagrange–Euler)
 - [x] Energy & Lagrangian terms
 - [x] Identification helpers (energy-based regressors)
+- [x] Inverse kinematics (closed form + polytope-constrained floating base)
 - [x] Kalman filter helpers
 - [x] JIT support
 - [ ] GPU acceleration
