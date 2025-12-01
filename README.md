@@ -67,7 +67,17 @@ pose = fk_func(q_sample, base_pose, world_pose)
 
 `RobotDynamics.build_model` also assembles friction (`B`), Baumgarte constraints, payload wrench models, and workspace helpers. Forward and inverse dynamics functions are available via the documented properties.
 
-Floating-base IK can be built with joint polytopes by passing `use_joint_polytope_constraint=True` along with `polytope_shape` and `polytope_joint_indices`; the solver enforces `A_hull @ q_poly + b_hull <= 0` on the selected joints.
+Floating-base IK can be built with joint polytopes by passing `use_joint_polytope_constraint=True` along with `polytope_shape` and `polytope_joint_indices`; the solver enforces `A_hull @ q_poly + b_hull <= 0` on the selected joints:
+
+```python
+A_hull = np.array([[1, 0],
+                   [0, 1],
+                   [-1, 0],
+                   [0, -1]])        # square in (q0, q1)
+b_hull = np.array([0.5, 0.5, 0.5, 0.5])
+ik = robot.build_floating_base_ik_fun(True, A_hull.shape, [0, 1])
+q_with_base = ik(target_pose, base_pose, joint_min, joint_max, A_hull, b_hull)
+```
 
 ## Controllers & observers
 
