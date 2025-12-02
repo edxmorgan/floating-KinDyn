@@ -468,7 +468,21 @@ class RobotDynamics(object):
             opti.subject_to(A_hull_param @ q_poly + b_hull_param <= 0)
 
         # solver
-        opti.solver("ipopt", {"print_time": 0}, {"print_level": 0})
+        # opti.solver("ipopt", {"print_time": 0}, {"print_level": 0})
+
+        options = {
+                "print_time": False,
+                "expand": True,
+                "qpsol": "qrqp",
+                "error_on_fail": False,
+                "qpsol_options": {"print_iter": False, "print_header": False, "error_on_fail": False},
+                "print_iteration": False,
+                "print_header": False,
+                "print_status": False,
+            }
+
+        opti.solver("sqpmethod", options)
+
 
         # function interface
         if use_joint_polytope_constraint:
@@ -556,7 +570,20 @@ class RobotDynamics(object):
             opti.subject_to(A_hull_param @ q_poly + b_hull_param <= 0)
 
         # solver
-        opti.solver("ipopt", {"print_time": 0}, {"print_level": 0})
+        # opti.solver("ipopt", {"print_time": 0}, {"print_level": 0})
+
+        options = {
+                "print_time": False,
+                "expand": True,
+                "qpsol": "qrqp",
+                "error_on_fail": False,
+                "qpsol_options": {"print_iter": False, "print_header": False, "error_on_fail": False},
+                "print_iteration": False,
+                "print_header": False,
+                "print_status": False,
+            }
+
+        opti.solver("sqpmethod", options)
 
         # function interface
         if use_joint_polytope_constraint:
