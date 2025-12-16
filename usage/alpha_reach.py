@@ -24,6 +24,7 @@ class Params:
     gravity = 9.81
 
     base_T0_new = [0.190, 0.000, -0.120, 3.141592653589793, 0.000, 0.000]
+    tipOffset = [0.00, 0.00, 0.04, 0.00, 0.00, 0.00]
     baumgarte_alpha = 200
     lock_mask = cs.vertcat(0.0, 0.0, 0.0, 0.0)
     sim_p = cs.vertcat(
@@ -44,7 +45,8 @@ class Params:
         0, 0, gravity,
         0, 0, 0, 0,
         0.19, 0, -0.12, 3.14159, 0, 0,
-        0, 0, 0, 0, 0, 0
+        0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0,
     )
 
     sim_n = 20
