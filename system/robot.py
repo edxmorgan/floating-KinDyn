@@ -406,7 +406,7 @@ class RobotDynamics(object):
 
     def internal_build_floating_base_ik_fun(self, 
             use_joint_polytope_constraint: bool = False,
-            polytope_shape: tuple | None = None,
+            polytope: tuple | None = None,
             polytope_joint_indices: list[int] | None = None,
         ):
         """
@@ -438,19 +438,14 @@ class RobotDynamics(object):
 
         # polytope parameters
         if use_joint_polytope_constraint:
-            assert polytope_shape is not None, "polytope_shape must be provided when using polytope constraints."
+            assert polytope is not None, "polytope_shape must be provided when using polytope constraints."
             assert polytope_joint_indices is not None, "polytope_joint_indices must be provided when using polytope constraints."
 
-            row_A_cons, col_A_cons = polytope_shape
+            A_hull, b_hull = polytope
+            row_A_cons, col_A_cons = A_hull.shape
             assert col_A_cons == len(polytope_joint_indices), (
                 f"polytope_shape[1] = {col_A_cons} must match len(polytope_joint_indices) = {len(polytope_joint_indices)}"
             )
-
-            A_hull_param = opti.parameter(row_A_cons, col_A_cons)
-            b_hull_param = opti.parameter(row_A_cons)
-        else:
-            A_hull_param = None
-            b_hull_param = None
 
 
         fk_out = internal_fk_eval_euler(q, base_pose_param, x, tip_offset_param)   # 6x1
@@ -474,7 +469,12 @@ class RobotDynamics(object):
         if use_joint_polytope_constraint:
             # build q_poly = [q[i0], q[i1], ...] as a CasADi vector
             q_poly = ca.vertcat(*[q[i] for i in polytope_joint_indices])
-            opti.subject_to(A_hull_param @ q_poly + b_hull_param <= 0)
+            opti.subject_to(A_hull @ q_poly + b_hull <= 0)
+        
+        opti.subject_to(opti.bounded(np.deg2rad(0),x[3],np.deg2rad(0))) #vehicle roll constraints
+        opti.subject_to(opti.bounded(np.deg2rad(0),x[4],np.deg2rad(0))) #vehicle pitch constraints
+
+        opti.subject_to(x[5] == target_param[5])   #vehicle yaw constraints
 
         # solver
         opti.solver("ipopt", {"print_time": 0}, {"print_level": 0})
@@ -497,7 +497,7 @@ class RobotDynamics(object):
         if use_joint_polytope_constraint:
             ik_fun = opti.to_function(
                 "floating_base_ik",
-                [target_param, base_pose_param, tip_offset_param, joint_min_param, joint_max_param, A_hull_param, b_hull_param],
+                [target_param, base_pose_param, tip_offset_param, joint_min_param, joint_max_param],
                 [q_x],
             )
         else:
@@ -512,7 +512,7 @@ class RobotDynamics(object):
 
     def internal_build_arm_base_ik_fun(self, 
             use_joint_polytope_constraint: bool = False,
-            polytope_shape: tuple | None = None,
+            polytope: tuple | None = None,
             polytope_joint_indices: list[int] | None = None,
         ):
         """
@@ -541,19 +541,17 @@ class RobotDynamics(object):
 
         # polytope parameters
         if use_joint_polytope_constraint:
-            assert polytope_shape is not None, "polytope_shape must be provided when using polytope constraints."
+            assert polytope is not None, "polytope_shape must be provided when using polytope constraints."
             assert polytope_joint_indices is not None, "polytope_joint_indices must be provided when using polytope constraints."
 
-            row_A_cons, col_A_cons = polytope_shape
+            A_hull, b_hull = polytope
+            row_A_cons, col_A_cons = A_hull.shape
             assert col_A_cons == len(polytope_joint_indices), (
                 f"polytope_shape[1] = {col_A_cons} must match len(polytope_joint_indices) = {len(polytope_joint_indices)}"
             )
-
-            A_hull_param = opti.parameter(row_A_cons, col_A_cons)
-            b_hull_param = opti.parameter(row_A_cons)
         else:
-            A_hull_param = None
-            b_hull_param = None
+            A_hull = None
+            b_hull = None
 
 
         fk_out = internal_fk_eval_euler(q, [0,0,0,0,0,0], [0,0,0,0,0,0], tip_offset_param)   # 6x1
@@ -577,7 +575,7 @@ class RobotDynamics(object):
         if use_joint_polytope_constraint:
             # build q_poly = [q[i0], q[i1], ...] as a CasADi vector
             q_poly = ca.vertcat(*[q[i] for i in polytope_joint_indices])
-            opti.subject_to(A_hull_param @ q_poly + b_hull_param <= 0)
+            opti.subject_to(A_hull @ q_poly + b_hull <= 0)
 
         # solver
         # opti.solver("ipopt", {"print_time": 0}, {"print_level": 0})
@@ -599,7 +597,7 @@ class RobotDynamics(object):
         if use_joint_polytope_constraint:
             ik_fun = opti.to_function(
                 "floating_base_ik",
-                [target_param, tip_offset_param, joint_min_param, joint_max_param, A_hull_param, b_hull_param],
+                [target_param, tip_offset_param, joint_min_param, joint_max_param],
                 [q],
             )
         else:
@@ -1323,15 +1321,15 @@ class RobotDynamics(object):
     @require_built_model
     def build_floating_base_ik_fun(self, floating_base=False,
                                    use_joint_polytope_constraint: bool = False,
-                                   polytope_shape: tuple | None = None,
+                                   polytope: tuple | None = None,
                                    polytope_joint_indices: list[int] | None = None):
         if floating_base:
             ik_solver = self.internal_build_floating_base_ik_fun(use_joint_polytope_constraint, 
-                                                            polytope_shape, 
+                                                            polytope, 
                                                             polytope_joint_indices)
         else:
             ik_solver = self.internal_build_arm_base_ik_fun(use_joint_polytope_constraint, 
-                                                            polytope_shape, 
+                                                            polytope, 
                                                             polytope_joint_indices)
         return ik_solver
 
