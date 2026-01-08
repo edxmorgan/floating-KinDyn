@@ -274,9 +274,11 @@ class RobotDynamics(object):
         icob_X_0s.append(end_i_X_0 @ cob_payload_tip) #payload cob contribution
         i_X_0s.append(end_i_X_0)
 
-        R_symx, Fks, qFks, geo_J, body_J, anlyt_J = self._compute_Fk_and_jacobians(q, i_X_0s)
-        com_R_symx, com_Fks, com_qFks, com_geo_J, com_body_J, com_anlyt_J = self._compute_Fk_and_jacobians(q, icom_X_0s)
-        cob_R_symx, cob_Fks, cob_qFks, cob_geo_J, cob_body_J, cob_anlyt_J = self._compute_Fk_and_jacobians(q, icob_X_0s)
+        x_base = world_pose if floating_base else None
+
+        R_symx, Fks, qFks, geo_J_q, body_J_q, anlyt_J_q, geo_J_base, body_J_base,anlyt_J_base, geo_J_full, body_J_full, analyt_J_full = self._compute_Fk_and_jacobians(q, i_X_0s, x_base=x_base)
+        com_R_symx, com_Fks, com_qFks, com_geo_J_q, com_body_J_q, com_anlyt_J_q, com_geo_J_base, com_body_J_base, com_anlyt_J_base, com_geo_J_full, com_body_J_full, com_analyt_J_full = self._compute_Fk_and_jacobians(q, icom_X_0s, x_base=x_base)
+        cob_R_symx, cob_Fks, cob_qFks, cob_geo_J_q, cob_body_J_q, cob_anlyt_J_q, cob_geo_J_base, cob_body_J_base, cob_anlyt_J_base, cob_geo_J_full, cob_body_J_full, cob_analyt_J_full = self._compute_Fk_and_jacobians(q, icob_X_0s, x_base=x_base)
 
         dynamic_parameters = [cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose, tip_offset_pose]
         underwater_parameters = [rho_w, cb_parms, V_params, r_cob_payload, V_p]
@@ -294,21 +296,42 @@ class RobotDynamics(object):
             "Fks": Fks,
             "com_Fks": com_Fks,
             "qFks": qFks,
+
             "com_qFks": com_qFks,
             "cob_Fks": cob_Fks,
             "cob_qFks": cob_qFks,
 
-            "geo_J": geo_J,
-            "com_geo_J": com_geo_J,
-            "cob_geo_J": cob_geo_J,
+            "geo_J_q": geo_J_q,
+            "com_geo_J_q": com_geo_J_q,
+            "cob_geo_J_q": cob_geo_J_q,
+            "body_J_q": body_J_q,
+            "com_body_J_q": com_body_J_q,
+            "cob_body_J_q": cob_body_J_q,
+            "anlyt_J_q": anlyt_J_q,
+            "com_anlyt_J_q": com_anlyt_J_q,
+            "cob_anlyt_J_q": cob_anlyt_J_q,
 
-            "body_J": body_J,
-            "com_body_J": com_body_J,
-            "cob_body_J": cob_body_J,
+            "geo_J_base": geo_J_base,
+            "body_J_base": body_J_base,
+            "anlyt_J_base": anlyt_J_base,
+            "com_geo_J_base": com_geo_J_base,
+            "cob_geo_J_base": cob_geo_J_base,
+            "com_body_J_base": com_body_J_base, 
+            "com_anlyt_J_base": com_anlyt_J_base,
+            "cob_body_J_base": cob_body_J_base, 
+            "cob_anlyt_J_base": cob_anlyt_J_base,
 
-            "anlyt_J": anlyt_J,
-            "com_anlyt_J": com_anlyt_J,
-            "cob_anlyt_J": cob_anlyt_J,
+            "geo_J_full": geo_J_full,
+            "body_J_full": body_J_full,
+            "anlyt_J_full": analyt_J_full,
+
+            "com_geo_J_full": com_geo_J_full,
+            "com_body_J_full": com_body_J_full, 
+            "com_analyt_J_full": com_analyt_J_full,
+
+            "cob_geo_J_full": cob_geo_J_full,
+            "cob_body_J_full": cob_body_J_full, 
+            "cob_analyt_J_full": cob_analyt_J_full,
 
             'I_b_mats': I_b_mats,
             "parameters": dynamic_parameters,
@@ -316,13 +339,22 @@ class RobotDynamics(object):
         }
         return kinematic_dict
     
-    def _compute_Fk_and_jacobians(self, q, i_X_0s):
+    def _compute_Fk_and_jacobians(self, q, i_X_0s, x_base=None):
         Fks = []  # collect forward kinematics in euler form
         qFks = []  # collect forward kinematics in quaternion form
-        geo_J = []          # collect geometric J’s
-        body_J = []         # collect body J’s
-        anlyt_J = []          # collect analytic J’s
+        geo_J_q = []          # collect geometric J’s
+        body_J_q = []         # collect body J’s
+        anlyt_J_q = []          # collect analytic J’s
         R_symx = []
+
+        # new outputs if floating
+        anlyt_J_base = []   # 6×6
+        geo_J_base = []     # 6×6
+        body_J_base = []    # 6×6
+        analyt_J_full = []  # 6×(6+n)
+        geo_J_full = []     # 6×(6+n)
+        body_J_full = []     # 6×(6+n)
+
         for i in range(len(i_X_0s)):
             R, p = i_X_0s[i][:3, :3], i_X_0s[i][:3, 3]
             R_symx.append(R)  # collect rotation matrices
@@ -336,21 +368,34 @@ class RobotDynamics(object):
             T_quat = ca.vertcat(p, qwxyz)  # pose vector [p; qx qy qz qw]
             qFks.append(T_quat)  # forward kinematics
             
-            # 6×n analytic Jacobian
-            Ja         = ca.jacobian(T_euler, q)
-            anlyt_J.append(Ja)
+            # 6×n analytic wrt joints Jacobian
+            Ja_q         = ca.jacobian(T_euler, q)
+            anlyt_J_q.append(Ja_q)
             
             phi, theta, psi = rpy[0], rpy[1], rpy[2]
-
             Ts = Transformation.euler_to_spatial_rate_T(phi, theta, psi)
             Tb = Transformation.euler_to_body_rate_T(phi, theta, psi)
             
             # 6×n geometric Jacobian
-            Jg         = Transformation.analytic_to_geometric(Ja, Ts)
-            Jb         = Transformation.analytic_to_geometric(Ja, Tb)
-            geo_J.append(Jg)
-            body_J.append(Jb)
-        return R_symx, Fks, qFks, geo_J, body_J, anlyt_J
+            Jg_q         = Transformation.analytic_to_geometric(Ja_q, Ts)
+            Jb_q         = Transformation.analytic_to_geometric(Ja_q, Tb)
+            geo_J_q.append(Jg_q)
+            body_J_q.append(Jb_q)
+
+            # new: wrt floating base pose (world_pose)
+            if x_base is not None:
+                Ja_b = ca.jacobian(T_euler, x_base)           # 6×6
+                Jg_b = Transformation.analytic_to_geometric(Ja_b, Ts)  # 6×6
+                Jb_b = Transformation.analytic_to_geometric(Ja_b, Tb)  # 6×6
+                anlyt_J_base.append(Ja_b)
+                geo_J_base.append(Jg_b)
+                body_J_base.append(Jb_b)
+                analyt_J_full.append(ca.horzcat(Ja_b, Ja_q))
+                geo_J_full.append(ca.horzcat(Jg_b, Jg_q))     # 6×(6+n)
+                body_J_full.append(ca.horzcat(Jb_b, Jb_q))    # 6×(6+n)
+
+        return R_symx, Fks, qFks, geo_J_q, body_J_q, anlyt_J_q, geo_J_base, body_J_base, anlyt_J_base, geo_J_full, body_J_full, analyt_J_full
+
 
     def approximate_workspace(self, root, tip, joint_limits, in_base_coordinate, floating_base=False, num_samples=100000):
         """
@@ -526,8 +571,8 @@ class RobotDynamics(object):
             ) # inertia at center wrt origin at frame i
             
             # define lumped parameters linear in kinetic energy
-            Jv_i = self.kinematic_dict['geo_J'][i][0:3, :]
-            Jω_i = self.kinematic_dict['geo_J'][i][3:6, :]
+            Jv_i = self.kinematic_dict['geo_J_q'][i][0:3, :]
+            Jω_i = self.kinematic_dict['geo_J_q'][i][3:6, :]
             
             R_i = self.kinematic_dict['R_symx'][i]
             mrc_base = R_i @ m_rci_id
@@ -630,8 +675,8 @@ class RobotDynamics(object):
             Ib_mat_i = self.kinematic_dict['I_b_mats'][i]
             R_i      = self.kinematic_dict['R_symx'][i]      # 3×3 (rotation of link i in base)
             
-            Jv_com_i = self.kinematic_dict['com_geo_J'][i][0:3, :]
-            Jω_com_i = self.kinematic_dict['com_geo_J'][i][3:6, :]
+            Jv_com_i = self.kinematic_dict['com_geo_J_q'][i][0:3, :]
+            Jω_com_i = self.kinematic_dict['com_geo_J_q'][i][3:6, :]
             D += m_i * (Jv_com_i.T @ Jv_com_i) + Jω_com_i.T @ R_i @ Ib_mat_i @ R_i.T @ Jω_com_i
         K = 0.5 * q_dot.T @ D @ q_dot
         return K , D
@@ -952,7 +997,7 @@ class RobotDynamics(object):
             p_ci = self.kinematic_dict['com_Fks'][i][0:3] # Position of CoM wrt base
 
             # Get Jacobians for the center of mass
-            J_com_i = self.kinematic_dict['com_geo_J'][i]
+            J_com_i = self.kinematic_dict['com_geo_J_q'][i]
             Jv_ci, Jw_ci = J_com_i[0:3, :], J_com_i[3:6, :]
 
             # Calculate linear and angular acceleration of the CoM using jtimes for J_dot * q_dot
@@ -1050,7 +1095,7 @@ class RobotDynamics(object):
         self.base_Rct = self._compute_base_reaction_global_balance(F_payload_base)
         assert self.base_Rct.shape == (6, 1), f"base_Rct vector has incorrect shape: {self.base_Rct.shape}"
         
-        tip_com_J = self.kinematic_dict["com_geo_J"][-1]   # 6×n geometric Jacobian at the tool
+        tip_com_J = self.kinematic_dict["com_geo_J_q"][-1]   # 6×n geometric Jacobian at the tool
         
         self.lock_mask = ca.SX.sym('lock_mask', q.size1(), 1)  # 1 means locked
         self.baumgarte_alpha = ca.SX.sym('baumgarte_alpha')  # baumgarte stability gain
