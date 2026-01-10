@@ -2,14 +2,24 @@
 import casadi as ca
 from system.robot import RobotDynamics
 class RobotControllers:
-    def __init__(self, n_joints: int, model: RobotDynamics):
+    def __init__(self, n_joints: int, model: RobotDynamics, has_endeffector: bool=False):
         n = int(n_joints)
-        cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose = model.kinematic_dict['parameters']
+        cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p, q, q_dot, q_dotdot, tau, base_pose, world_pose, tip_offset_pose = model.kinematic_dict['parameters']
+
         self.g_ff = model.id_g # feedforward term
 
         # Symbols, all vectors are n×1 and column shaped
         self.q       = q
         self.q_dot   = q_dot
+
+        if has_endeffector:
+            grasper_q    = ca.SX.sym("grasper_q", 1, 1)
+            grasper_qdot = ca.SX.sym("grasper_qdot", 1, 1)
+            self.q = ca.vertcat(q, grasper_q)
+            self.q_dot = ca.vertcat(q_dot, grasper_qdot)
+            self.g_ff = ca.vertcat(self.g_ff, 0)
+            n = n+1
+
         self.q_ref   = ca.SX.sym("q_ref",  n, 1)  # reference position
 
         self.Kp      = ca.SX.sym("Kp",     n, 1)
