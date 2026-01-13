@@ -9,7 +9,7 @@ Symbolic modelling toolkit for floating- or fixed-base manipulators. The library
 - **Full Lagrangian pipeline** – generates inertia (`D`), Coriolis (`C`), gravity (`g`), friction, energy, power, and payload reaction terms via CasADi symbols.
 - **Inverse kinematics** – closed-form arm IK plus floating-base task IK examples in `usage/robot_inverse_kinematics_analysis.ipynb`.
 - **Workspace analysis** – sampling-based AABB and point-cloud reach studies via `RobotDynamics.approximate_workspace` plus precomputed `usage/workspace.npy`.
-- **System ID helpers** – exported regressors (`id2sim_params.casadi`, `arm_id_Y.casadi`) and parameter lumping utilities for energy-based identification.
+- **System ID helpers** – parameter lumping utilities plus notebook-generated regressors for energy-based identification.
 - **Controllers & filters** – CasADi PID builder with gravity feedforward (`system/controllers.py`) and EKF/Sensor fusion examples under `usage/`.
 - **Code generation** – produces standalone C (`fk_eval_.c`, `Mnext.c`, etc.) and shared libraries (`libFK.so`, `libmEKF_next.so`) for embedded execution.
 - **JIT-ready** – optional Clang-backed CasADi JIT (see `RobotDynamics.jit_func_opts`) for rapid prototyping.
@@ -20,7 +20,7 @@ Symbolic modelling toolkit for floating- or fixed-base manipulators. The library
 - `system/controllers.py` – PID builder and helper utilities that wrap the generated model.
 - `system/utils/` – transformation matrices, Jacobian helpers, and casadi-compatible math utilities.
 - `usage/` – reference notebooks (`robot_dynamics.ipynb`, `controllers.ipynb`, `joint_ekf.ipynb`), controllers, compiled artifacts, and URDF resources.
-- `resources/` – meshes, URDF files, and documentation assets (e.g., `resources/dory.jpg`).
+- `resources/` – documentation assets (e.g., `resources/dory.jpg`).
 - `usage/urdf/` – manipulators used in the notebooks (`alpha_5_robot.urdf`, etc.).
 
 ## Requirements
@@ -46,23 +46,49 @@ CasADi JIT expects Clang on Linux/macOS (`CC=clang`). Update `RobotDynamics.jit_
 ## Quickstart
 
 ```python
+import casadi as ca
+import numpy as np
 from system.robot import RobotDynamics
 
 robot = RobotDynamics(use_jit=True)
-robot.from_file("resources/urdf/alpha_5_robot.urdf")
+robot.from_file("usage/urdf/reach_alpha_5/alpha_5_robot.urdf")
 robot.build_model("base_link", "alpha_standard_jaws_base_link", floating_base=False)
 
 # Access generated functions
-fk = robot.get_kinematic_dict()["Fks"][-1]        # terminal FK pose (symbolic)
+kinematic_dict = robot.get_kinematic_dict()
+fk = kinematic_dict["Fks"][-1]                      # terminal FK pose (symbolic)
 M = robot.get_inertia_matrix()                      # D(q)
 C = robot.get_coriolis_centrifugal_matrix()         # C(q, qdot)
 G = robot.get_gravity_vector()                      # g(q)
 qdd = robot.get_forward_dynamics()                  # forward dynamics with friction
-Y = robot.kinematic_dict()["Y"]                     # identification regressor
+Y = robot.Y                                         # identification regressor
 
 # Evaluate FK numerically
-fk_func = robot.kinematic_dict()["fk_func"]         # casadi.Function built during _kinematics
-pose = fk_func(q_sample, base_pose, world_pose)
+(
+    c_parms,
+    m_params,
+    I_params,
+    fv_coeff,
+    fc_coeff,
+    fs_coeff,
+    v_s_coeff,
+    vec_g,
+    r_com_payload,
+    m_p,
+    q,
+    q_dot,
+    q_dotdot,
+    tau,
+    base_pose,
+    world_pose,
+    tip_offset_pose,
+) = kinematic_dict["parameters"]
+fk_func = ca.Function("fk_eval", [q, base_pose, world_pose, tip_offset_pose], [fk])
+q_sample = np.zeros(kinematic_dict["n_joints"])
+base_pose_sample = np.array([0.190, 0.000, -0.120, 3.141592653589793, 0.000, 0.000])  # mount wrt vehicle COM
+world_pose_sample = np.zeros(6)  # vehicle COM in world frame
+tip_offset_sample = np.zeros(6)
+pose = fk_func(q_sample, base_pose_sample, world_pose_sample, tip_offset_sample)
 ```
 
 `RobotDynamics.build_model` also assembles friction (`B`), Baumgarte constraints, payload wrench models, and workspace helpers. Forward and inverse dynamics functions are available via the documented properties.
@@ -94,13 +120,13 @@ Extended Kalman Filter helpers (`libmEKF_next.so`, `joint_ekf.ipynb`) demonstrat
 
 ## Identification & code generation assets
 
-- `usage/arm_id_Y.casadi`, `usage/id2sim_params.casadi` – exported regressors and mappings used alongside `system._build_sys_regressor`.
-- `usage/fk_eval_.c`, `usage/fk_com_eval.c`, `usage/Mnext.c`, `usage/EKFnext.c` – generated C for FK, COM FK, mass matrix propagation, and EKF updates. Corresponding `.so` files in `usage/` are ready for use in external simulators.
+- `usage/arm_id_Y.casadi`, `usage/id2sim_params.casadi` – generated via notebooks and used alongside `system._build_sys_regressor`.
+- `usage/fk_eval_.c`, `usage/fk_com_eval.c`, `usage/Mnext.c`, `usage/EKFnext.c` – generated via notebooks for FK, COM FK, mass matrix propagation, and EKF updates. Build the corresponding `.so` files locally.
 
 ## Implementation status
 
 - [x] Forward kinematics (Euler & quaternion forms)
-- [x] Inverse kinematics (fast closed form solver)
+- [x] Inverse kinematics (analytic arm IK in `usage/alpha_reach.py`)
 - [x] Workspace analysis (sampling-based AABB + cloud)
 - [x] Forward dynamics (with payload and friction terms)
 - [x] Inverse dynamics (Lagrange–Euler)
