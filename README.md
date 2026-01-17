@@ -24,7 +24,7 @@ center-of-buoyancy terms.
 - [x] Workspace analysis via sampling (`RobotDynamics.approximate_workspace`).
 - [x] EKF helpers and controller utilities.
 - [x] CasADi code generation for C/C++/MATLAB.
-- [x] Optional CasADi JIT support (Clang recommended).
+- [x] Optional CasADi JIT support.
 
 ## Installation
 
