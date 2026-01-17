@@ -1,5 +1,5 @@
 # Manipulator Dynamics
-A research-oriented toolkit for differentiable modeling of fixed- or floating-base
+A toolkit for differentiable modeling of fixed- or floating-base
 serial manipulators. The library ingests URDF chains and produces symbolic kinematics,
 dynamics, energy terms, and identification regressors as CasADi graphs suitable for
 optimization, estimation, and control.
