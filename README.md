@@ -76,10 +76,6 @@ in `usage/joint_ekf.ipynb`.
 and a point cloud. Reference limits for the Alpha manipulator are defined in
 `usage/alpha_reach.py`, and a precomputed sample cloud is stored in `usage/workspace.npy`.
 
-## Generated artifacts
-Several notebooks can export C code and shared libraries for embedded deployment.
-These generated files are not tracked in the repository and should be produced locally.
-
 ## References
 - Roy Featherstone. *Robot Dynamics Algorithms*. Kluwer, 1987.
 - M. W. Spong, S. Hutchinson, M. Vidyasagar. *Robot Modeling and Control*. Wiley, 2006.
@@ -87,5 +83,4 @@ These generated files are not tracked in the repository and should be produced l
 
 ## Caution
 This toolkit is experimental and validated on a limited set of manipulators. Review
-all generated models (especially friction and payload terms) before use in
-safety-critical control loops.
+all generated models before use in safety-critical control loops.
