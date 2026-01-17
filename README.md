@@ -20,7 +20,7 @@ center-of-buoyancy terms.
 - [x] Inverse dynamics (Lagrange-Euler).
 - [x] Energy and Lagrangian terms.
 - [x] System identification regressors and CVXPY estimator.
-- [x] Inverse kinematics (closed-form arm IK in `usage/alpha_reach.py`).
+- [x] Inverse kinematics (closed-form).
 - [x] Workspace analysis via sampling (`RobotDynamics.approximate_workspace`).
 - [x] EKF helpers and controller utilities.
 - [x] CasADi code generation for C/C++/MATLAB.
