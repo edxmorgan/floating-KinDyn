@@ -35,9 +35,6 @@ python -m pip install --upgrade pip
 pip install casadi numpy scipy matplotlib urdf-parser-py transforms3d
 ```
 
-CasADi JIT expects Clang on Linux/macOS (`CC=clang`). Adjust
-`RobotDynamics.jit_func_opts` if a different compiler is required.
-
 ## Core usage
 
 ```python
