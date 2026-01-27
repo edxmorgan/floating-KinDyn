@@ -23,9 +23,6 @@ class RobotControllers:
         self.sys_C = ca.SX.zeros(n,1)
         self.sys_C[0:n_joints] = model.Cqdot_reg
 
-        self.sys_B = ca.SX.zeros(n,1)
-        self.sys_B[0:n_joints] = model.B_reg
-
         self.sys_g = ca.SX.zeros(n,1)
         self.sys_g[0:n_joints] = model.id_g
 
@@ -104,15 +101,14 @@ class RobotControllers:
         #trajectorytracking using inverse dynamics computed torque control with PID feedback
         # Reference minus actual so gains appear positive
         err = self.q_ref - self.q
-
         d_err = self.dq_ref - self.q_dot
 
         # Integrator update
         sum_e_next = self.sum_e + err * self.dt
 
-        dqq_des = self.dqq_ref + ca.diag(self.Kp) @ err + ca.diag(self.Ki) @ sum_e_next - ca.diag(self.Kd) @ d_err
+        dqq_des = self.dqq_ref + ca.diag(self.Kp) @ err + ca.diag(self.Ki) @ sum_e_next + ca.diag(self.Kd) @ d_err
 
-        tt_tau = self.sys_D@dqq_des + self.sys_C + self.sys_g + self.sys_B
+        tt_tau = self.sys_D@dqq_des + self.sys_g + self.sys_C
 
         # Elementwise saturation
         u_sat = ca.fmin(ca.fmax(tt_tau, self.u_min), self.u_max)
