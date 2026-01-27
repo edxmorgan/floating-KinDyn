@@ -6,8 +6,6 @@ class RobotControllers:
         n = int(n_joints)
         cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p, q, q_dot, q_dotdot, tau, base_pose, world_pose, tip_offset_pose = model.kinematic_dict['parameters']
 
-        self.g_ff = model.id_g # feedforward term
-
         # Symbols, all vectors are n×1 and column shaped
         self.q       = q
         self.q_dot   = q_dot
@@ -17,10 +15,23 @@ class RobotControllers:
             grasper_qdot = ca.SX.sym("grasper_qdot", 1, 1)
             self.q = ca.vertcat(q, grasper_q)
             self.q_dot = ca.vertcat(q_dot, grasper_qdot)
-            self.g_ff = ca.vertcat(self.g_ff, 0)
             n = n+1
 
+        self.sys_D = ca.diag(ca.SX.ones(n))
+        self.sys_D[0:n_joints,0:n_joints] = model.id_D  # inertia matrix
+
+        self.sys_C = ca.SX.zeros(n,1)
+        self.sys_C[0:n_joints] = model.Cqdot_reg
+
+        self.sys_B = ca.SX.zeros(n,1)
+        self.sys_B[0:n_joints] = model.B_reg
+
+        self.sys_g = ca.SX.zeros(n,1)
+        self.sys_g[0:n_joints] = model.id_g
+
         self.q_ref   = ca.SX.sym("q_ref",  n, 1)  # reference position
+        self.dq_ref  = ca.SX.sym("dq_ref", n, 1)  # reference velocity
+        self.dqq_ref = ca.SX.sym("dqq_ref", n, 1)  # reference acceleration
 
         self.Kp      = ca.SX.sym("Kp",     n, 1)
         self.Ki      = ca.SX.sym("Ki",     n, 1)
@@ -39,6 +50,7 @@ class RobotControllers:
                     model._sys_id_coeff["fc_id_vertcat"], 
                     model._sys_id_coeff["fs_id_vertcat"],
                     v_s_coeff, vec_g, r_com_payload, m_p, base_pose, world_pose)
+
 
     def build_arm_pid(self):
         """
@@ -59,7 +71,7 @@ class RobotControllers:
 
         # PID with positive gains, velocity target is zero
         u_raw = (
-            self.g_ff # feedforward term
+            self.sys_g # feedforward term
             + ca.diag(self.Kp) @ err # proportional term
             + ca.diag(self.Ki) @ sum_e_next # integral term
             - ca.diag(self.Kd) @ (self.q_dot) # derivative term
@@ -75,6 +87,44 @@ class RobotControllers:
                 self.q,
                 self.q_dot,
                 self.q_ref,
+                self.Kp,
+                self.Ki,
+                self.Kd,
+                self.sum_e,
+                self.dt,
+                self.u_max,
+                self.u_min,
+                self.sim_params
+            ],
+            [u_sat, err, sum_e_next],
+        )
+        return pid
+
+    def trajectorytracking_pid(self):
+        #trajectorytracking using inverse dynamics computed torque control with PID feedback
+        # Reference minus actual so gains appear positive
+        err = self.q_ref - self.q
+
+        d_err = self.dq_ref - self.q_dot
+
+        # Integrator update
+        sum_e_next = self.sum_e + err * self.dt
+
+        dqq_des = self.dqq_ref + ca.diag(self.Kp) @ err + ca.diag(self.Ki) @ sum_e_next - ca.diag(self.Kd) @ d_err
+
+        tt_tau = self.sys_D@dqq_des + self.sys_C + self.sys_g + self.sys_B
+
+        # Elementwise saturation
+        u_sat = ca.fmin(ca.fmax(tt_tau, self.u_min), self.u_max)
+
+        pid = ca.Function(
+            "tt_pid",
+            [
+                self.q,
+                self.q_dot,
+                self.q_ref,
+                self.dq_ref,
+                self.dqq_ref,
                 self.Kp,
                 self.Ki,
                 self.Kd,
