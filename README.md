@@ -40,11 +40,22 @@ pip install casadi numpy scipy matplotlib urdf-parser-py transforms3d
 ```python
 import casadi as ca
 import numpy as np
-from system.robot import RobotDynamics
+import system.robot as robotSystem
 
-robot = RobotDynamics(use_jit=True)
-robot.from_file("usage/urdf/reach_alpha_5/alpha_5_robot.urdf")
-robot.build_model("base_link", "alpha_standard_jaws_base_link", floating_base=False)
+robot = robotSystem.RobotDynamics(use_jit=True)
+project_root = os.path.abspath(os.path.join(os.getcwd(), '..'))
+path_to_urdf = os.path.join(
+    project_root,
+    'usage',
+    'urdf','reach_alpha_5',
+    'alpha_5_robot.urdf'
+)
+robot.from_file(path_to_urdf)
+
+root = "base_link"
+tip = "alpha_standard_jaws_base_link"
+
+robot.build_model(root, tip, floating_base=True, has_endeffector=False)
 
 M = robot.get_inertia_matrix()
 C = robot.get_coriolis_centrifugal_matrix()
