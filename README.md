@@ -11,9 +11,9 @@ and control.
 </p>
 
 <p align="center">
-<img src="./resources/edit_sim2real_x4.gif" width="600" alt="Online system identification demo" />
+  <img src="./resources/edit_sim2real_x4.gif" width="600" alt="Online system identification demo" /><br/>
+  Sim to real comparison, left open loop prediction, right real system.
 </p>
-*Sim to real prediction comparison. Left shows a long horizon open loop simulation prediction without any sensor measurements, right shows the corresponding real system response.*
 
 
 ## Overview
