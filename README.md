@@ -24,7 +24,7 @@ Low-level rigid-body and underwater vehicle dynamics utilities are provided by t
 and manipulator modeling modular while allowing tight symbolic integration.
 
 The model supports payload effects, friction, and, for underwater applications,
-buoyancy and center-of-buoyancy terms.
+hydrodynamic terms.
 
 ```
 Floating-KinDyn-Graph/
