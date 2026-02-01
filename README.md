@@ -15,9 +15,6 @@ and control.
   Sim to real comparison, left open loop prediction, right real system.
 </p>
 
-
-## Overview
-
 The core implementation constructs kinematic transforms, Jacobians, and Lagrangian terms
 directly from URDF descriptions. All major quantities are represented as CasADi
 expressions, enabling analytic derivatives and optional JIT compilation.
