@@ -62,6 +62,20 @@ If you already cloned without submodules:
 git submodule update --init --recursive
 ```
 
+<!-- Create and activate a virtual environment:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+```
+
+Install Python dependencies:
+
+```bash
+pip install casadi numpy scipy matplotlib urdf-parser-py transforms3d
+``` -->
+
 ## Core usage
 
 ```python
