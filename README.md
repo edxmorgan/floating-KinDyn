@@ -5,10 +5,10 @@ The library ingests URDF chains and produces symbolic kinematics, dynamics, ener
 and identification regressors as CasADi graphs suitable for optimization, estimation,
 and control.
 
-<!-- <p align="center">
+<p align="center">
   <img src="./resources/uvms.jpg" width="48%" alt="UVMS manipulator" />
   <img src="./resources/dory.jpg" width="48%" alt="UVMS manipulator" />
-</p> -->
+</p>
 
 <p align="center">
   <img src="./resources/edit_sim2real_x4.gif" width="600" alt="Online system identification demo" /><br/>
