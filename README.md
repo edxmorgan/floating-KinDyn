@@ -1,4 +1,4 @@
-# Differentiable Floating-Base Manipulator Dynamics
+# Floating-Base Manipulator Dynamics For Underwater Robots
 
 A toolkit for differentiable modeling of fixed- or floating-base serial manipulators.
 The library ingests URDF chains and produces symbolic kinematics, dynamics, energy terms,
