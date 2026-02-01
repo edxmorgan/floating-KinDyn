@@ -109,9 +109,11 @@ qdd = robot.get_forward_dynamics()
 
 ## System identification
 
-The estimator is implemented in `system/system_id.py` as
-`SerialLinksDynamicEstimator`. It solves a constrained convex fit using CVXPY
-(MOSEK by default).
+The estimator is implemented in `system/system_id.py` (`SerialLinksDynamicEstimator`)
+and solves a constrained convex fit via CVXPY (MOSEK by default).
+
+<img src="./resources/online_id.gif" width="600" alt="Online system identification demo" />
+
 
 Example workflows:
 
