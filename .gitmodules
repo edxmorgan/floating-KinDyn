@@ -1,0 +1,3 @@
+[submodule "path/to/diff_uv"]
+	path = path/to/diff_uv
+	url = https://github.com/edxmorgan/diff_uv
