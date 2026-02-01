@@ -10,6 +10,8 @@ and control.
   <img src="./resources/dory.jpg" width="48%" alt="UVMS manipulator" />
 </p>
 
+<img src="./resources/edit_sim2real_x4.gif" width="600" alt="Online system identification demo" />
+
 ## Overview
 
 The core implementation constructs kinematic transforms, Jacobians, and Lagrangian terms
