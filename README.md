@@ -26,7 +26,7 @@ buoyancy and center-of-buoyancy terms.
 ```
 Floating-KinDyn-Graph/
 ├── baseVehicle/        # floating-base dynamics submodule (vehicle and hydrodynamics utilities) 
-├── system/             # manipulator dynamics
+├── system/             # manipulator and coupling dynamics
 └── usage/              # examples, notebooks, datasets
 ```
 
