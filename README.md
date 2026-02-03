@@ -12,7 +12,7 @@ and control.
 
 <p align="center">
   <img src="./resources/edit_sim2real_x4.gif" width="600" alt="Online system identification demo" /><br/>
-  Sim to real comparison, left open loop prediction, right real system.
+  Sim and real comparison, left open loop prediction, right real system.
 </p>
 
 The core implementation constructs kinematic transforms, Jacobians, and Lagrangian terms
