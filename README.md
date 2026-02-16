@@ -158,8 +158,3 @@ precomputed workspace sample is stored in `usage/workspace.npy`.
 * Roy Featherstone, *Robot Dynamics Algorithms*, Kluwer, 1987.
 * M. W. Spong, S. Hutchinson, M. Vidyasagar, *Robot Modeling and Control*, Wiley, 2006.
 * Bruno Siciliano et al., *Robotics: Modelling, Planning and Control*, Springer, 2010.
-
-## Caution
-
-This toolkit is experimental and validated on a limited set of vehicle & manipulator system. Review all
-generated models before deploying in safety-critical control loops.
