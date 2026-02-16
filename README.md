@@ -161,5 +161,5 @@ precomputed workspace sample is stored in `usage/workspace.npy`.
 
 ## Caution
 
-This toolkit is experimental and validated on a limited set of manipulators. Review all
+This toolkit is experimental and validated on a limited set of vehicle & manipulator system. Review all
 generated models before deploying in safety-critical control loops.
