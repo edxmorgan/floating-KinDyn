@@ -78,24 +78,25 @@ class RobotControllers:
         # Elementwise saturation
         u_sat = ca.fmin(ca.fmax(u_raw, self.u_min), self.u_max)
 
+        control_arg = [
+            self.q,
+            self.q_dot,
+            self.q_ref,
+            self.Kp,
+            self.Ki,
+            self.Kd,
+            self.sum_e,
+            self.dt,
+            self.u_max,
+            self.u_min,
+            #self.sim_params
+            ]
         pid = ca.Function(
             "pid",
-            [
-                self.q,
-                self.q_dot,
-                self.q_ref,
-                self.Kp,
-                self.Ki,
-                self.Kd,
-                self.sum_e,
-                self.dt,
-                self.u_max,
-                self.u_min,
-                #self.sim_params
-            ],
+            control_arg,
             [u_sat, err, sum_e_next],
         )
-        return pid
+        return pid , control_arg
 
     def trajectorytracking_pid(self):
         #trajectorytracking using inverse dynamics computed torque control with PID feedback

@@ -875,7 +875,7 @@ class RobotDynamics(object):
         tau_lock = S @ lam             # n×1
         return tau_lock
 
-    def forward_simulation(self):
+    def forward_simulation(self, nof_elems = 30):
         cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose, tip_offset_pose = self.kinematic_dict['parameters']
         dt = ca.SX.sym('dt')
         rigid_p = ca.vertcat(*cm_parms, *m_params, *I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p, base_pose, world_pose, tip_offset_pose)
@@ -904,14 +904,14 @@ class RobotDynamics(object):
         dae  = {'x': x, 'ode': xdot, 'p': p, 'u': tau_sys}
         opts = {
             'simplify': True,
-            'number_of_finite_elements': 30,
+            'number_of_finite_elements': nof_elems,
             }
         intg = ca.integrator('intg', 'rk', dae, 0, 1, opts)
         x_next = intg(x0=x, u=tau_sys, p=p)['xf']
         F_next = ca.Function('Mnext', sys_arg, [x_next])
-        return F_next
+        return F_next, sys_arg
 
-    def forward_simulation_reg(self):
+    def forward_simulation_reg(self, nof_elems = 30):
         cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose, tip_offset_pose = self.kinematic_dict['parameters']
         dt = ca.SX.sym('dt')
         rigid_p = ca.vertcat(self._sys_id_coeff["masses_id_syms_vertcat"],
@@ -947,12 +947,12 @@ class RobotDynamics(object):
         dae  = {'x': x, 'ode': xdot, 'p': p, 'u': tau_sys}
         opts = {
             'simplify': True,
-            'number_of_finite_elements': 30,
+            'number_of_finite_elements': nof_elems,
             }
         intg = ca.integrator('intg', 'rk', dae, 0, 1, opts)
         x_next = intg(x0=x, u=tau_sys, p=p)['xf']
         F_next = ca.Function('Mnext_reg', sys_arg, [x_next])
-        return F_next
+        return F_next, sys_arg
     
     def id2sim_params(self):
         sim_params_expr = ca.vertcat(self._sys_id_coeff["masses_id_syms_vertcat"],
@@ -1116,8 +1116,9 @@ class RobotDynamics(object):
         self.qdd_reg = self._build_forward_dynamics(q_dot, self.id_D, self.Cqdot_reg, self.id_g, 
                                                     self.B_reg, tau, tip_com_J, F_payload_base, self.lock_mask, self.baumgarte_alpha)
 
-        self.F_next = self.forward_simulation()
-        self.F_next_reg = self.forward_simulation_reg()
+        no_element_discetization = 3.0
+        self.F_next, self.F_next_sys_arg = self.forward_simulation(no_element_discetization)
+        self.F_next_reg, self.F_next_reg_sys_arg = self.forward_simulation_reg(no_element_discetization)
         
         self.joint_torque = self._build_inverse_dynamics(self.D, self.C, q_dotdot, q_dot, self.g, self.B, tip_com_J, F_payload_base)
         assert self.joint_torque.shape == (n_joints, 1), f"Inverse dynamics vector qdd has incorrect shape: {self.joint_torque.shape}"
