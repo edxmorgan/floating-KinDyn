@@ -2,7 +2,7 @@
 import casadi as ca
 from system.robot import RobotDynamics
 class RobotControllers:
-    def __init__(self, n_joints: int, model: RobotDynamics, has_endeffector: bool=False):
+    def __init__(self, n_joints: int, model: RobotDynamics):
         n = int(n_joints)
         cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p, q, q_dot, q_dotdot, tau, base_pose, world_pose, tip_offset_pose = model.kinematic_dict['parameters']
 
@@ -10,7 +10,7 @@ class RobotControllers:
         self.q       = q
         self.q_dot   = q_dot
 
-        if has_endeffector:
+        if model.has_endeffector:
             grasper_q    = ca.SX.sym("grasper_q", 1, 1)
             grasper_qdot = ca.SX.sym("grasper_qdot", 1, 1)
             self.q = ca.vertcat(q, grasper_q)
@@ -68,7 +68,7 @@ class RobotControllers:
 
         # PID with positive gains, velocity target is zero
         u_raw = (
-            self.sys_g # feedforward term
+            #self.sys_g # feedforward term
             + ca.diag(self.Kp) @ err # proportional term
             + ca.diag(self.Ki) @ sum_e_next # integral term
             - ca.diag(self.Kd) @ (self.q_dot) # derivative term
@@ -91,7 +91,7 @@ class RobotControllers:
                 self.dt,
                 self.u_max,
                 self.u_min,
-                self.sim_params
+                #self.sim_params
             ],
             [u_sat, err, sum_e_next],
         )

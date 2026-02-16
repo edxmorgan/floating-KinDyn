@@ -36,6 +36,7 @@ class RobotDynamics(object):
             # NOTE: use_jit=True requires that CasADi is built with Clang
             for k, v in self.jit_func_opts.items():
                 self.func_opts[k] = v
+        self.has_endeffector = False
 
     def from_file(self, filename):
         """Uses an URDF file to get robot description."""
@@ -1055,6 +1056,7 @@ class RobotDynamics(object):
         """
         # Step 1: Build the fundamental kinematic model (transforms, Jacobians, etc.)
         self.kinematic_dict = self._kinematics(root, tip, floating_base)
+        self.has_endeffector = has_endeffector
         
         # Step 2: Extract necessary symbolic variables and parameters from the model
         cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose, tip_offset_pose = self.kinematic_dict['parameters']
@@ -1114,8 +1116,8 @@ class RobotDynamics(object):
         self.qdd_reg = self._build_forward_dynamics(q_dot, self.id_D, self.Cqdot_reg, self.id_g, 
                                                     self.B_reg, tau, tip_com_J, F_payload_base, self.lock_mask, self.baumgarte_alpha)
 
-        self.F_next = self.forward_simulation(has_endeffector)
-        self.F_next_reg = self.forward_simulation_reg(has_endeffector)
+        self.F_next = self.forward_simulation(self.has_endeffector)
+        self.F_next_reg = self.forward_simulation_reg(self.has_endeffector)
         
         self.joint_torque = self._build_inverse_dynamics(self.D, self.C, q_dotdot, q_dot, self.g, self.B, tip_com_J, F_payload_base)
         assert self.joint_torque.shape == (n_joints, 1), f"Inverse dynamics vector qdd has incorrect shape: {self.joint_torque.shape}"
