@@ -154,7 +154,7 @@ Reference limits for the Alpha manipulator are defined in `usage/alpha_reach.py`
 precomputed workspace sample is stored in `usage/workspace.npy`.
 
 ## References
-* Uncertainty-Aware Adaptive Dynamics for Underwater Vehicle Manipulator Systems: IEEE International, Conference on Robotics and Automation  (ICRA), 2026, accepted
+* Edward Morgan et al., *Uncertainty-Aware Adaptive Dynamics for Underwater Vehicle Manipulator Systems*, ICRA, 2026, accepted
 * Roy Featherstone, *Robot Dynamics Algorithms*, Kluwer, 1987.
 * M. W. Spong, S. Hutchinson, M. Vidyasagar, *Robot Modeling and Control*, Wiley, 2006.
 * Bruno Siciliano et al., *Robotics: Modelling, Planning and Control*, Springer, 2010.
