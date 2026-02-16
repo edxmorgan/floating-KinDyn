@@ -875,12 +875,12 @@ class RobotDynamics(object):
         tau_lock = S @ lam             # n×1
         return tau_lock
 
-    def forward_simulation(self, has_endeffector = False):
+    def forward_simulation(self):
         cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose, tip_offset_pose = self.kinematic_dict['parameters']
         dt = ca.SX.sym('dt')
         rigid_p = ca.vertcat(*cm_parms, *m_params, *I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p, base_pose, world_pose, tip_offset_pose)
         
-        if has_endeffector:
+        if self.has_endeffector:
             # Scalar position and velocity states
             s     = ca.SX.sym('s')
             s_dot = ca.SX.sym('s_dot')
@@ -911,7 +911,7 @@ class RobotDynamics(object):
         F_next = ca.Function('Mnext', sys_arg, [x_next])
         return F_next
 
-    def forward_simulation_reg(self, has_endeffector = False):
+    def forward_simulation_reg(self):
         cm_parms, m_params, I_params, fv_coeff, fc_coeff, fs_coeff, v_s_coeff, vec_g, r_com_payload, m_p ,q, q_dot, q_dotdot, tau , base_pose, world_pose, tip_offset_pose = self.kinematic_dict['parameters']
         dt = ca.SX.sym('dt')
         rigid_p = ca.vertcat(self._sys_id_coeff["masses_id_syms_vertcat"],
@@ -923,7 +923,7 @@ class RobotDynamics(object):
                               v_s_coeff, vec_g, r_com_payload, m_p, base_pose, world_pose, tip_offset_pose)
         
 
-        if has_endeffector:
+        if self.has_endeffector:
             # Scalar position and velocity states
             s     = ca.SX.sym('s')
             s_dot = ca.SX.sym('s_dot')
@@ -1116,8 +1116,8 @@ class RobotDynamics(object):
         self.qdd_reg = self._build_forward_dynamics(q_dot, self.id_D, self.Cqdot_reg, self.id_g, 
                                                     self.B_reg, tau, tip_com_J, F_payload_base, self.lock_mask, self.baumgarte_alpha)
 
-        self.F_next = self.forward_simulation(self.has_endeffector)
-        self.F_next_reg = self.forward_simulation_reg(self.has_endeffector)
+        self.F_next = self.forward_simulation()
+        self.F_next_reg = self.forward_simulation_reg()
         
         self.joint_torque = self._build_inverse_dynamics(self.D, self.C, q_dotdot, q_dot, self.g, self.B, tip_com_J, F_payload_base)
         assert self.joint_torque.shape == (n_joints, 1), f"Inverse dynamics vector qdd has incorrect shape: {self.joint_torque.shape}"
