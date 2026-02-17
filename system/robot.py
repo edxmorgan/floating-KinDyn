@@ -1038,7 +1038,7 @@ class RobotDynamics(object):
 
         return W_base
 
-    def build_model(self, root, tip, floating_base=False, has_endeffector = False):
+    def build_model(self, root, tip, floating_base=False, has_endeffector = False, step_discetization_no = 30.0):
         """
         Constructs the symbolic model for the robot's dynamics.
 
@@ -1116,9 +1116,8 @@ class RobotDynamics(object):
         self.qdd_reg = self._build_forward_dynamics(q_dot, self.id_D, self.Cqdot_reg, self.id_g, 
                                                     self.B_reg, tau, tip_com_J, F_payload_base, self.lock_mask, self.baumgarte_alpha)
 
-        no_element_discetization = 30.0
-        self.F_next, self.F_next_sys_arg = self.forward_simulation(no_element_discetization)
-        self.F_next_reg, self.F_next_reg_sys_arg = self.forward_simulation_reg(no_element_discetization)
+        self.F_next, self.F_next_sys_arg = self.forward_simulation(step_discetization_no)
+        self.F_next_reg, self.F_next_reg_sys_arg = self.forward_simulation_reg(step_discetization_no)
         
         self.joint_torque = self._build_inverse_dynamics(self.D, self.C, q_dotdot, q_dot, self.g, self.B, tip_com_J, F_payload_base)
         assert self.joint_torque.shape == (n_joints, 1), f"Inverse dynamics vector qdd has incorrect shape: {self.joint_torque.shape}"
