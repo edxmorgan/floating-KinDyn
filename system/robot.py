@@ -1116,7 +1116,7 @@ class RobotDynamics(object):
         self.qdd_reg = self._build_forward_dynamics(q_dot, self.id_D, self.Cqdot_reg, self.id_g, 
                                                     self.B_reg, tau, tip_com_J, F_payload_base, self.lock_mask, self.baumgarte_alpha)
 
-        no_element_discetization = 3.0
+        no_element_discetization = 30.0
         self.F_next, self.F_next_sys_arg = self.forward_simulation(no_element_discetization)
         self.F_next_reg, self.F_next_reg_sys_arg = self.forward_simulation_reg(no_element_discetization)
         
@@ -1204,3 +1204,47 @@ class RobotDynamics(object):
     def get_base_Reaction(self):
         """Returns the manipulation base reactions."""
         return self.base_Rct
+
+    @staticmethod
+    def build_soft_lock_hysteresis(n_dyn: int = 4):
+        """
+        Differentiable approximation of hysteresis with Unlock-Priority logic.
+        
+        Logic:
+        1. If |u| < on_db, g_lock -> 1 (state moves toward 1)
+        2. If |u| > off_db, g_unlock -> 1 (state moves toward 0)
+        3. If both active (overlap), Unlock wins (s_next -> 0).
+        """
+        # Inputs
+        u      = ca.SX.sym("u", n_dyn, 1)      # Effort/Command
+        s      = ca.SX.sym("s", n_dyn, 1)      # Current soft lock state [0, 1]
+        on_db  = ca.SX.sym("on_db", n_dyn, 1)  # Threshold to LOCK
+        off_db = ca.SX.sym("off_db", n_dyn, 1) # Threshold to UNLOCK
+        
+        # Parameters
+        k_on   = ca.SX.sym("k_on")             # Steepness for locking
+        k_off  = ca.SX.sym("k_off")            # Steepness for unlocking
+        eps    = ca.SX.sym("eps")              # Smoothing factor
+
+        # 1. Smooth absolute value (C1 continuous)
+        abs_u = ca.sqrt(u*u + eps*eps)
+
+        # 2. Sigmoid Gates
+        g_lock   = 1 / (1 + ca.exp(-k_on * (on_db - abs_u)))
+        g_unlock = 1 / (1 + ca.exp(-k_off * (abs_u - off_db)))
+
+        # 3. Robust Hysteresis Update
+        s_potential = s + (1 - s) * g_lock
+        s_next      = s_potential * (1 - g_unlock)
+
+        # 4. Numerical Safety Clip
+        s_next = ca.fmax(ca.fmin(s_next, 1.0), 0.0)
+
+        # Define the CasADi Function
+        return ca.Function(
+            "soft_lock_hysteresis",
+            [u, s, on_db, off_db, k_on, k_off, eps],
+            [s_next, g_lock, g_unlock],
+            ["u", "s", "on_db", "off_db", "k_on", "k_off", "eps"],
+            ["lock_mask", "g_lock", "g_unlock"]
+        )
