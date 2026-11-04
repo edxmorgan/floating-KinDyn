@@ -341,6 +341,11 @@ class RobotDynamics(object):
         return kinematic_dict
     
     def _compute_Fk_and_jacobians(self, q, i_X_0s, x_base=None):
+        """Geometric outputs map [v_base_world, omega_base_world, qdot]
+        to [v_link_world, omega_link_world] at the link origin.
+        Analytic outputs instead take base XYZ/RPY coordinate rates.
+        Legacy body_J outputs retain their existing convention.
+        """
         Fks = []  # collect forward kinematics in euler form
         qFks = []  # collect forward kinematics in quaternion form
         geo_J_q = []          # collect geometric J’s
@@ -374,11 +379,15 @@ class RobotDynamics(object):
             anlyt_J_q.append(Ja_q)
             
             phi, theta, psi = rpy[0], rpy[1], rpy[2]
-            Ts = Transformation.euler_to_spatial_rate_T(phi, theta, psi)
             Tb = Transformation.euler_to_body_rate_T(phi, theta, psi)
             
             # 6×n geometric Jacobian
-            Jg_q         = Transformation.analytic_to_geometric(Ja_q, Ts)
+            # Differentiate SO(3) directly: dR R^T = skew(omega_world).
+            # No Euler chart or Euler-rate conversion is needed here.
+            Jw_q = ca.horzcat(*[
+                Transformation.vee(ca.reshape(ca.jacobian(ca.reshape(R, 9, 1), q)[:, j], 3, 3) @ R.T)
+                for j in range(q.numel())])
+            Jg_q = ca.vertcat(ca.jacobian(p, q), Jw_q)
             Jb_q         = Transformation.analytic_to_geometric(Ja_q, Tb)
             geo_J_q.append(Jg_q)
             body_J_q.append(Jb_q)
@@ -386,7 +395,12 @@ class RobotDynamics(object):
             # new: wrt floating base pose (world_pose)
             if x_base is not None:
                 Ja_b = ca.jacobian(T_euler, x_base)           # 6×6
-                Jg_b = Transformation.analytic_to_geometric(Ja_b, Ts)  # 6×6
+                # Rigid-body velocity transport from base origin to link origin.
+                # Columns are physical world-frame velocities, NOT Euler rates.
+                offset_world = p - x_base[:3]
+                Jg_b = ca.vertcat(
+                    ca.horzcat(ca.DM.eye(3), -ca.skew(offset_world)),
+                    ca.horzcat(ca.DM.zeros(3, 3), ca.DM.eye(3)))
                 Jb_b = Transformation.analytic_to_geometric(Ja_b, Tb)  # 6×6
                 anlyt_J_base.append(Ja_b)
                 geo_J_base.append(Jg_b)
