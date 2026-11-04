@@ -68,7 +68,7 @@ class RobotControllers:
 
         # PID with positive gains, velocity target is zero
         u_raw = (
-            #self.sys_g # feedforward term
+            self.sys_g # gravity feedforward, matching deployed PID
             + ca.diag(self.Kp) @ err # proportional term
             + ca.diag(self.Ki) @ sum_e_next # integral term
             - ca.diag(self.Kd) @ (self.q_dot) # derivative term
@@ -89,7 +89,7 @@ class RobotControllers:
             self.dt,
             self.u_max,
             self.u_min,
-            #self.sim_params
+            self.sim_params
             ]
         pid = ca.Function(
             "pid",
