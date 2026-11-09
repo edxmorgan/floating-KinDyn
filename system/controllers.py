@@ -23,6 +23,10 @@ class RobotControllers:
         self.sys_C = ca.SX.zeros(n,1)
         self.sys_C[0:n_joints] = model.Cqdot_reg
 
+        self.has_endeffector = model.has_endeffector
+        self.sys_friction = ca.SX.zeros(n,1)
+        self.sys_friction[0:n_joints] = model.B_reg
+
         self.sys_g = ca.SX.zeros(n,1)
         self.sys_g[0:n_joints] = model.id_g
 
@@ -41,10 +45,10 @@ class RobotControllers:
         self.u_min   = ca.SX.sym("u_min",  n, 1)
 
         self.sim_params = ca.vertcat(model._sys_id_coeff["masses_id_syms_vertcat"],
-                    model._sys_id_coeff["first_moments_id_vertcat"], 
+                    model._sys_id_coeff["first_moments_id_vertcat"],
                     model._sys_id_coeff["inertias_id_vertcat"],
                     model._sys_id_coeff["fv_id_vertcat"],
-                    model._sys_id_coeff["fc_id_vertcat"], 
+                    model._sys_id_coeff["fc_id_vertcat"],
                     model._sys_id_coeff["fs_id_vertcat"],
                     v_s_coeff, vec_g, r_com_payload, m_p, base_pose, world_pose)
 
@@ -134,6 +138,43 @@ class RobotControllers:
             [u_sat, err, sum_e_next],
         )
         return pid
-    
 
-    
+
+
+    def sliding_mode(self):
+        """Computed-torque SMC for the arm and optional scalar gripper.
+
+        q/ddq are joint coordinates, not tool pose. In the unlocked, unsaturated
+        exact model, s_dot=-K*s-rho*sat(s/phi)+M(q)^-1*d. This acceleration-form
+        reaching law remains valid for configuration-dependent inertia; it does
+        not assume that M is constant. Locks and joint stops belong to the plant
+        and invalidate that unconstrained reaching claim while active.
+        """
+        n = self.q.numel()
+        surface = ca.SX.sym('surface_gain', n)
+        damping = ca.SX.sym('damping_gain', n)
+        switching_gain = ca.SX.sym('switching_gain', n)
+        boundary = ca.SX.sym('boundary', n)
+        error = self.q_ref-self.q
+        error_rate = self.dq_ref-self.q_dot
+        sliding = self.q_dot-self.dq_ref-surface*error
+        saturation = ca.fmin(1,ca.fmax(-1,sliding/ca.fmax(boundary,1e-15)))
+        switching = ca.if_else(boundary>0,saturation,ca.sign(sliding))
+        acceleration = (self.dqq_ref+surface*error_rate
+                        -damping*sliding-switching_gain*switching)
+        inertia = ca.SX(self.sys_D)
+        bias = self.sys_C+self.sys_g+self.sys_friction
+        args = [self.q,self.q_dot,self.q_ref,self.dq_ref,self.dqq_ref,
+                surface,damping,switching_gain,boundary,self.u_min,self.u_max,self.sim_params]
+        names = ['q','velocity','desired_position','desired_velocity','desired_acceleration',
+                 'surface_gain','damping_gain','switching_gain','boundary',
+                 'effort_min','effort_max','parameters']
+        if self.has_endeffector:
+            gripper = ca.SX.sym('gripper_parameters',3) # mass, damping, stiffness
+            inertia[-1,-1] = gripper[0]
+            bias[-1] = gripper[1]*self.q_dot[-1]+gripper[2]*self.q[-1]
+            args.append(gripper); names.append('gripper_parameters')
+        raw = inertia@acceleration+bias
+        effort = ca.fmin(ca.fmax(raw,self.u_min),self.u_max)
+        return ca.Function('arm_sliding_mode_control',args,[effort,raw,sliding,error],
+                           names,['effort','effort_raw','sliding','position_error'])
